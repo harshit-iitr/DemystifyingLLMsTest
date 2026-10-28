@@ -53,7 +53,7 @@ class RequestHandler:
             else:
                 generated_tokens = [ord(c) for c in raw_gen]
         else:
-            generated_tokens = list(prompt_tokens)
+            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
 
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
             response_text = self.tokenizer.decode(generated_tokens)
