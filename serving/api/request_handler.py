@@ -44,9 +44,16 @@ class RequestHandler:
             raise RuntimeError("No inference engine configured")
         if self.tokenizer is None:
             raise RuntimeError("No tokenizer configured")
+        model_config = getattr(self.engine, "model_config", None)
+        if model_config is not None and hasattr(self.tokenizer, "bind_to_model"):
+            self.tokenizer.bind_to_model(model_config.vocab_size)
         prompt_tokens = self.tokenizer.encode(prompt)
         if hasattr(self.engine, "generate_tokens"):
             options = {name: request_body[name] for name in ("top_k", "top_p") if name in request_body}
+            from inspect import signature
+            vocab = getattr(self.tokenizer, "vocab", None)
+            if vocab is not None and "eos_token_id" in signature(self.engine.generate_tokens).parameters:
+                options["eos_token_id"] = vocab.eos_token_id
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens, max_new_tokens=max_tokens,
                 temperature=temperature, **options)

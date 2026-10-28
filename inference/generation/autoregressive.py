@@ -1,7 +1,7 @@
 """Autoregressive generation with optional incremental KV caching."""
 import torch
 from typing import Optional, Callable
-from .kv_cache import KVCache
+from .kv_cache import KVCache, supports_kv_cache
 
 
 @torch.no_grad()
@@ -17,14 +17,14 @@ def autoregressive_generate(model: torch.nn.Module, input_ids: torch.Tensor,
     generated = input_ids.clone()
     config = getattr(model, "config", None)
     num_layers = getattr(model, "num_layers", getattr(config, "n_layers", 12))
-    cache = KVCache(num_layers) if use_cache and num_layers > 0 else None
+    cache = KVCache(num_layers) if use_cache and num_layers > 0 and supports_kv_cache(model) else None
     finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=input_ids.device)
     if config is not None and hasattr(config, "max_seq_len"):
         if generated.size(1) > config.max_seq_len:
             raise ValueError("Prompt exceeds the model context window")
         max_new_tokens = min(max_new_tokens, config.max_seq_len - generated.size(1))
     for step in range(max_new_tokens):
-        model_inputs = generated[:, -1:] if cache is not None and step else generated
+        model_inputs = generated[:, -1:] if cache is not None and cache.get_seq_length() else generated
         logits = model(model_inputs, kv_cache=cache) if cache is not None else model(model_inputs)
         if isinstance(logits, tuple):
             logits = logits[0]

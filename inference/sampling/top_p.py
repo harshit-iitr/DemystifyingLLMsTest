@@ -5,7 +5,8 @@ import torch
 def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     if not 0 <= p <= 1:
         raise ValueError("p must be in [0, 1]")
-    if p == 1:
+    # Preserve the original API's disabled-filter values at both endpoints.
+    if p == 0 or p == 1:
         return logits
     sorted_logits, indices = torch.sort(logits, descending=True, dim=-1)
     cumulative = sorted_logits.softmax(dim=-1).cumsum(dim=-1)

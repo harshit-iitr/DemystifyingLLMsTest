@@ -6,7 +6,7 @@ from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from config.constants import BOS_TOKEN_ID, EOS_TOKEN_ID
 from inference.sampling import Sampler
-from inference.generation.kv_cache import KVCache
+from inference.generation.kv_cache import KVCache, supports_kv_cache
 
 
 class FullTransformerModel(nn.Module):
@@ -78,7 +78,7 @@ class InferenceEngine:
         if count == 0:
             return tokens
         if not tokens:
-            tokens = [BOS_TOKEN_ID]
+            tokens = [getattr(self.model_config, "bos_token_id", min(BOS_TOKEN_ID, self.model_config.vocab_size - 1))]
         if len(tokens) > self.model_config.max_seq_len:
             raise ValueError("Prompt exceeds the model context window")
         count = min(count, self.model_config.max_seq_len - len(tokens))
@@ -87,7 +87,7 @@ class InferenceEngine:
         sampler = Sampler(cfg.temperature if temperature is None else temperature,
                           cfg.top_k if top_k is None else top_k,
                           cfg.top_p if top_p is None else top_p, cfg.repetition_penalty)
-        eos = EOS_TOKEN_ID if eos_token_id is None else eos_token_id
+        eos = getattr(self.model_config, "eos_token_id", min(EOS_TOKEN_ID, self.model_config.vocab_size - 1)) if eos_token_id is None else eos_token_id
         stop_ids = set(cfg.stop_token_ids) | {eos}
         if cfg.beam_width > 1:
             from inference.generation.beam_search import BeamSearch
@@ -95,13 +95,14 @@ class InferenceEngine:
                               eos if cfg.early_stopping else None,
                               stop_token_ids=stop_ids if cfg.early_stopping else []).search(
                 self.model, torch.tensor([tokens], device=self.device)).squeeze(0).tolist()
-        # Incremental caching is supported by the built-in transformer; custom models
-        # keep their ordinary single-input forward contract.
-        cache = KVCache(self.model_config.n_layers) if cfg.use_kv_cache and self.model_config.n_layers > 0 and isinstance(self.model, FullTransformerModel) else None
+        # Honor a model's public cache capability while retaining ordinary
+        # single-input forward calls for models without cache support.
+        num_layers = getattr(self.model, "num_layers", self.model_config.n_layers)
+        cache = KVCache(num_layers) if cfg.use_kv_cache and num_layers > 0 and supports_kv_cache(self.model) else None
         for step in range(count):
             if len(tokens) > self.model_config.max_seq_len:
                 raise ValueError("Generation exceeded the model context window")
-            model_tokens = tokens[-1:] if cache is not None and step else tokens
+            model_tokens = tokens[-1:] if cache is not None and cache.get_seq_length() else tokens
             inputs = torch.tensor([model_tokens], dtype=torch.long, device=self.device)
             logits = self.model(inputs, kv_cache=cache) if cache is not None else self.model(inputs)
             if isinstance(logits, tuple):
@@ -117,6 +118,8 @@ class InferenceEngine:
         if tokenizer is None:
             from tokenizer import BPETokenizer
             tokenizer = BPETokenizer()
+        if hasattr(tokenizer, "bind_to_model"):
+            tokenizer.bind_to_model(self.model_config.vocab_size)
         ids = tokenizer.encode(prompt)
         vocab = getattr(tokenizer, "vocab", None)
         if "eos_token_id" not in kwargs and vocab is not None:

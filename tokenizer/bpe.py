@@ -2,6 +2,7 @@
 from typing import List, Dict, Tuple, Optional
 import re
 from .vocab import Vocabulary
+from .special_tokens import PAD_TOKEN, UNK_TOKEN, BOS_TOKEN
 
 
 class BPETokenizer:
@@ -12,7 +13,7 @@ class BPETokenizer:
 
     @property
     def vocab_size(self) -> int:
-        return max(self.vocab._id_to_token, default=-1) + 1
+        return self.vocab.max_size or (max(self.vocab._id_to_token, default=-1) + 1)
 
     def _get_stats(self, pieces: List[str]) -> Dict[Tuple[str, str], int]:
         pairs: Dict[Tuple[str, str], int] = {}
@@ -52,15 +53,34 @@ class BPETokenizer:
         return pieces
 
     def tokenize(self, text: str) -> List[str]:
-        tokens = []
-        if self.merges:
-            for piece in re.findall(r"\s+|\S+", text):
-                tokens.extend([piece] if piece.isspace() else self.bpe(piece))
+        """Return word pieces, preserving the original public token-list API."""
+        return [piece for word in text.split(" ") if word for piece in self.bpe(word)]
+
+    def _encoding_pieces(self, text: str) -> List[str]:
+        if not self.merges:
+            return self.tokenize(text)
+        # Encoding needs word boundaries to reconstruct merged pieces. These
+        # whitespace tokens are internal and do not change tokenize() results.
+        return [token for piece in re.findall(r"\s+|\S+", text)
+                for token in ([piece] if piece.isspace() else self.bpe(piece))]
+
+    def bind_to_model(self, vocab_size: int) -> None:
+        """Bind a dynamic tokenizer to a compact model's explicit ID space.
+
+        Imported vocabulary IDs are preserved and validated. Only the default
+        dynamic word vocabulary is rebuilt with in-range special-token IDs.
+        """
+        if self.vocab._shared and self.vocab_size > vocab_size:
+            old = self.vocab
+            bounded = Vocabulary({}, max_size=vocab_size)
+            # Start a fresh dynamic ID space: unrelated words learned by other
+            # default tokenizers must not consume this compact model's capacity.
+            bounded.decode_separator = old.decode_separator
+            self.vocab = bounded
         else:
-            for word in text.split(" "):
-                if word:
-                    tokens.append(word)
-        return tokens
+            if any(idx >= vocab_size for idx in self.vocab._id_to_token):
+                raise ValueError("Tokenizer vocabulary contains IDs outside the model vocabulary")
+            self.vocab.max_size = vocab_size
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:
         from .encoding import encode

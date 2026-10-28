@@ -13,7 +13,8 @@ def encode(text: str, tokenizer: Optional[BPETokenizer] = None, vocab: Optional[
         tokenizer = BPETokenizer(vocab=vocab)
     vocab = tokenizer.vocab
 
-    tokens = tokenizer.tokenize(text)
+    encode_pieces = getattr(tokenizer, "_encoding_pieces", tokenizer.tokenize)
+    tokens = encode_pieces(text)
     token_ids = [vocab.token_to_id(t) for t in tokens]
 
     if add_bos:

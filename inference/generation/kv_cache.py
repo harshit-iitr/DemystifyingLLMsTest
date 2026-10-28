@@ -49,3 +49,13 @@ class KVCache:
         if self.k_cache[layer_idx] is None:
             return 0
         return self.k_cache[layer_idx].shape[-2]
+
+
+def supports_kv_cache(model) -> bool:
+    """Inspect the public forward signature, never caller locals or test state."""
+    import inspect
+    try:
+        parameters = inspect.signature(getattr(model, "forward", model)).parameters
+        return "kv_cache" in parameters
+    except (TypeError, ValueError):
+        return False

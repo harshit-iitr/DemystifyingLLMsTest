@@ -9,14 +9,19 @@ class Vocabulary:
     _shared_vocab: Dict[str, int] = {}
     _shared_id_to_token: Dict[int, str] = {}
 
-    def __init__(self, vocab_dict: Optional[Dict[str, int]] = None):
-        self._shared = vocab_dict is None
-        source = Vocabulary._shared_vocab if self._shared else vocab_dict
+    def __init__(self, vocab_dict: Optional[Dict[str, int]] = None, max_size: Optional[int] = None):
+        if max_size is not None and (type(max_size) is not int or max_size < 3):
+            raise ValueError("A vocabulary needs capacity for PAD, UNK and BOS/EOS")
+        self.max_size = max_size
+        self._shared = vocab_dict is None and max_size is None
+        source = Vocabulary._shared_vocab if self._shared else (vocab_dict or {})
         self._token_to_id = dict(source)
         if any(type(idx) is not int or idx < 0 for idx in self._token_to_id.values()):
             raise ValueError("Vocabulary IDs must be non-negative integers")
         if len(set(self._token_to_id.values())) != len(self._token_to_id):
             raise ValueError("Vocabulary IDs must be unique")
+        if max_size is not None and any(idx >= max_size for idx in self._token_to_id.values()):
+            raise ValueError("Vocabulary ID exceeds configured capacity")
         self._id_to_token = {idx: token for token, idx in self._token_to_id.items()}
         self.decode_separator = " "
         def special(token, preferred):
@@ -25,7 +30,7 @@ class Vocabulary:
             return self.add_token(token, preferred if preferred not in self._id_to_token else None)
         self.pad_token_id = special(PAD_TOKEN, 0)
         self.unk_token_id = special(UNK_TOKEN, 1)
-        self.bos_token_id = special(BOS_TOKEN, 50256)
+        self.bos_token_id = special(BOS_TOKEN, 50256 if max_size is None else min(50256, max_size - 1))
         self.eos_token_id = self.bos_token_id
 
     def add_token(self, token: str, idx: Optional[int] = None) -> int:
@@ -42,6 +47,8 @@ class Vocabulary:
                 idx += 1
         if type(idx) is not int or idx < 0:
             raise ValueError("Token ID must be a non-negative integer")
+        if self.max_size is not None and idx >= self.max_size:
+            raise ValueError("Vocabulary is full or token ID exceeds configured capacity")
         existing = self._id_to_token.get(idx)
         if existing is not None and existing != token:
             raise ValueError("Token ID already belongs to another token")

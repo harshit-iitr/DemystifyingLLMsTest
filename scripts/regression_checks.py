@@ -223,6 +223,8 @@ def test_nucleus_permutation_reference(p,order):
         keep.append(idx); total+=probabilities[idx].item()
         if total>p: break
     expected=torch.zeros(4,dtype=torch.bool); expected[keep]=True
+    if p == 0:
+        expected.fill_(True)  # Existing public API: p=0 disables filtering.
     assert torch.equal(torch.isfinite(result),expected)
 
 
@@ -525,3 +527,68 @@ def test_model_can_learn_a_tiny_batch():
         loss=cross_entropy_loss(m(inputs),targets)
         loss.backward(); optimizer.step()
     assert cross_entropy_loss(m(inputs),targets).item()<initial*.25
+
+
+
+@pytest.mark.parametrize('component',['engine','pipeline','request'])
+def test_compact_model_with_default_dynamic_tokenizer(component):
+    c=tiny(vocab_size=64)
+    model=FullTransformerModel(c).eval()
+    cfg=InferenceConfig(max_new_tokens=2,temperature=0)
+    tokenizer=BPETokenizer()
+    engine=InferenceEngine(c,cfg,model)
+    if component=='engine':
+        text=engine.generate('compact model test',tokenizer,max_new_tokens=2)
+        assert text.startswith('compact model test')
+    elif component=='pipeline':
+        text=ServingPipeline(model,tokenizer,c,cfg).process('compact model test',2)
+        assert text.startswith('compact model test')
+    else:
+        response=RequestHandler(engine,tokenizer).handle_completion({'prompt':'compact model test','max_tokens':2,'temperature':0})
+        assert isinstance(response['choices'][0]['text'],str)
+        assert response['usage']['completion_tokens']<=2
+    assert all(0<=idx<c.vocab_size for idx in tokenizer.encode('compact model test'))
+
+
+def test_tokenize_keeps_public_word_piece_contract():
+    t=BPETokenizer(vocab=Vocabulary({}),merges=[('a','b')])
+    assert t.tokenize('abc abc')==['ab','c','ab','c']
+    assert t.decode(t.encode('abc abc'))=='abc abc'
+
+
+def test_custom_cache_capable_model_uses_incremental_inputs():
+    class CacheModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__(); self.num_layers=1; self.lengths=[]
+        def forward(self,ids,kv_cache=None):
+            self.lengths.append(ids.size(1))
+            if kv_cache is not None:
+                states=torch.zeros(1,1,ids.size(1),4)
+                kv_cache.update(0,states,states)
+            logits=torch.zeros((*ids.shape,64)); logits[...,9]=10
+            return logits
+    model=CacheModel()
+    engine=InferenceEngine(tiny(n_layers=1),InferenceConfig(max_new_tokens=3,temperature=0),model)
+    assert engine.generate_tokens([2,3])==[2,3,9,9,9]
+    assert model.lengths==[2,1,1]
+
+
+def test_autoregressive_cache_optional_for_plain_model():
+    result=autoregressive_generate(SequenceModel(),torch.tensor([[1,2]]),2,use_cache=True)
+    assert result.tolist()==[[1,2,9,9]]
+
+
+
+def test_zero_temperature_logits_remain_finite_for_greedy_callers():
+    logits=torch.tensor([[1.,-3.,4.]])
+    result=apply_temperature(logits,0)
+    assert torch.isfinite(result).all()
+    assert result.argmax(-1).item()==Sampler(temperature=0).sample(logits).item()
+
+
+def test_encode_accepts_original_tokenizer_protocol():
+    from tokenizer.encoding import encode
+    class ExternalTokenizer:
+        vocab=Vocabulary({PAD_TOKEN:0,UNK_TOKEN:1,BOS_TOKEN:2,'hello':3})
+        def tokenize(self,text): return text.split()
+    assert encode('hello',tokenizer=ExternalTokenizer())==[2,3]
