@@ -109,7 +109,15 @@ class MultiHeadAttention(nn.Module):
 
         # 4. Prepare causal mask if needed
         if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+            k_len = k.size(-2)
+            offset = k_len - seq_len  # tokens already held in the KV cache
+            if offset == 0:
+                mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+            else:
+                mask = torch.triu(
+                    torch.full((seq_len, k_len), float("-inf"), device=x.device, dtype=x.dtype),
+                    diagonal=offset + 1,
+                ).unsqueeze(0).unsqueeze(0)
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(

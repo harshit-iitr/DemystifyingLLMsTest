@@ -69,6 +69,10 @@ with torch.no_grad():
     a = model(ids[:,:5], kv_cache=cache)
     b = model(ids[:,5:], kv_cache=cache)
     check("kv-cache incremental == full forward", torch.allclose(b[:,-1], full[:,-1], atol=1e-4))
+    cache2 = KVCache(cfg.n_layers)
+    model(ids[:,:3], kv_cache=cache2)
+    c = model(ids[:,3:], kv_cache=cache2)
+    check("kv-cache with multi-token chunk == full forward", torch.allclose(c[:,-1], full[:,-1], atol=1e-4))
     g = autoregressive_generate(model, ids, max_new_tokens=4)
     check("generate appends tokens, keeps prompt", g.shape==(1,10) and torch.equal(g[:,:6], ids))
     g2 = autoregressive_generate(model, ids, max_new_tokens=4, use_cache=True)
@@ -77,6 +81,13 @@ with torch.no_grad():
 eng = InferenceEngine(model_config=cfg, inference_config=InferenceConfig(max_new_tokens=5, temperature=0.0, stop_token_ids=[]))
 out = eng.generate_tokens([1,2,3])
 check("engine generates 5 new tokens", len(out)==8 and all(0<=t<200 for t in out))
+
+from config import constants
+from tokenizer.vocab import Vocabulary
+check("UNK id consistent with vocab", constants.UNK_TOKEN_ID == Vocabulary().unk_token_id)
+short = ModelConfig(d_model=32, n_heads=2, n_layers=1, vocab_size=100, max_seq_len=8, dropout=0.0)
+eng2 = InferenceEngine(model_config=short, inference_config=InferenceConfig(max_new_tokens=12, temperature=0.0, stop_token_ids=[]))
+check("generation past max_seq_len does not crash", len(eng2.generate_tokens([1,2,3])) == 15)
 
 bad = [n for n,ok in results if not ok]
 print(f"\n{len(results)-len(bad)}/{len(results)} checks passed")

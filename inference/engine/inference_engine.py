@@ -61,10 +61,10 @@ class InferenceEngine:
         self.device = torch.device(device) if device else torch.device("cpu")
 
         if model is not None:
-            self.model = model
+            self.model = model.to(self.device) if hasattr(model, "to") else model
         else:
             try:
-                self.model = FullTransformerModel(self.model_config)
+                self.model = FullTransformerModel(self.model_config).to(self.device)
             except Exception as e:
                 logger.debug(f"Could not build FullTransformerModel: {e}")
                 self.model = None
@@ -111,7 +111,8 @@ class InferenceEngine:
         tokens = list(prompt_tokens)
         with torch.no_grad():
             for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+                window = tokens[-self.model_config.max_seq_len:]  # stay inside the context window
+                input_tensor = torch.tensor([window], dtype=torch.long, device=self.device)
                 logits = self.model(input_tensor)
                 if isinstance(logits, tuple):
                     logits = logits[0]
