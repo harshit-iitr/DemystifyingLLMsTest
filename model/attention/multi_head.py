@@ -110,7 +110,16 @@ class MultiHeadAttention(nn.Module):
         # 4. Prepare causal mask if needed
         # With a KV cache, keys may include past positions: kv_len >= seq_len.
         kv_len = k.size(-2)
-        if mask is None and use_causal_mask and seq_len > 1:
+        if mask is not None and mask.dim() == 2:
+            # Padding mask (batch, kv_len): 1 = real token, 0 = padding -> additive key mask.
+            # A large finite negative (not -inf) keeps fully-padded rows NaN-free.
+            pad = (1.0 - mask[:, None, None, :].to(x.dtype)) * -1e9
+            causal = torch.zeros(1, 1, seq_len, kv_len, device=x.device, dtype=x.dtype)
+            if use_causal_mask and seq_len > 1:
+                full = create_causal_mask(seq_len=kv_len, device=x.device, dtype=x.dtype)
+                causal = full[:, :, kv_len - seq_len:, :]
+            mask = causal + pad
+        elif mask is None and use_causal_mask and seq_len > 1:
             full = create_causal_mask(seq_len=kv_len, device=x.device, dtype=x.dtype)
             mask = full[:, :, kv_len - seq_len:, :]
 

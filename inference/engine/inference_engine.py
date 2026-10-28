@@ -32,9 +32,22 @@ class FullTransformerModel(nn.Module):
             from model.heads import tie_weights
             tie_weights(self.lm_head, self.embeddings.token_embedding)
 
-    def forward(self, input_ids: torch.Tensor, kv_cache: Optional[Any] = None, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        kv_cache: Optional[Any] = None,
+        **kwargs
+    ) -> torch.Tensor:
         offset = kv_cache.get_seq_length(0) if kv_cache is not None else 0
-        h = self.embeddings(input_ids, offset=offset)
+        position_ids = None
+        if attention_mask is not None:
+            # Real tokens get positions 0..n-1 regardless of left padding (BatchProcessor pads left)
+            position_ids = (attention_mask.long().cumsum(dim=-1) - 1).clamp(min=0)
+            if kwargs.get("mask") is None:
+                kwargs["mask"] = attention_mask
+            position_ids = position_ids[:, -input_ids.size(1):]
+        h = self.embeddings(input_ids, offset=offset, position_ids=position_ids)
         h = self.blocks(h, kv_cache=kv_cache, **kwargs)
         logits = self.lm_head(h)
         return logits
