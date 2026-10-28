@@ -1,5 +1,6 @@
 """Module implementation."""
 from typing import List, Dict, Tuple, Optional
+import re
 from .vocab import Vocabulary
 
 
@@ -60,9 +61,9 @@ class BPETokenizer:
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split(" "):
-            if word:
-                tokens.extend(self.bpe(word))
+        # Keep whitespace as token content so encode/decode is lossless.
+        for piece in re.findall(r"\s+|\S+", text):
+            tokens.extend(self.bpe(piece))
         return tokens
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:

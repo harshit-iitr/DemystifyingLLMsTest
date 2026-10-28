@@ -11,6 +11,7 @@ from config.inference_config import InferenceConfig
 from utils.logging_utils import get_logger
 from inference.generation.autoregressive import autoregressive_generate
 from inference.sampling.sampler import Sampler
+from inference.generation.beam_search import BeamSearch
 
 logger = get_logger("inference_engine")
 
@@ -110,10 +111,23 @@ class InferenceEngine:
         )
         input_tensor = torch.tensor([prompt_tokens], dtype=torch.long, device=self.device)
 
+        if self.inference_config.beam_width > 1:
+            search = BeamSearch(
+                beam_width=self.inference_config.beam_width,
+                max_length=max_tokens,
+                eos_token_id=(self.inference_config.stop_token_ids[0]
+                              if self.inference_config.stop_token_ids else None),
+            )
+            return search.search(self.model, input_tensor).squeeze(0).tolist()
+
         history = list(prompt_tokens)
+        generator = None
+        if self.inference_config.seed is not None:
+            generator = torch.Generator(device=self.device)
+            generator.manual_seed(self.inference_config.seed)
 
         def sample_next(logits: torch.Tensor) -> torch.Tensor:
-            token = sampler.sample(logits, generated_tokens=history)
+            token = sampler.sample(logits, generated_tokens=history, generator=generator)
             history.append(int(token.reshape(-1)[0].item()))
             return token
 
