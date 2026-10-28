@@ -51,8 +51,8 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
-        self.n_heads = n_heads or getattr(cfg, "n_heads", 12)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
+        self.n_heads = n_heads if n_heads is not None else getattr(cfg, "n_heads", 12)
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
         if self.d_model % self.n_heads != 0:

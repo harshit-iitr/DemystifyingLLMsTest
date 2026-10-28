@@ -5,6 +5,7 @@ HTTP API request parsing, validation, and execution handler.
 import time
 import uuid
 import math
+import inspect
 from typing import Dict, Any, Optional, List
 from utils.logging_utils import get_logger
 
@@ -58,7 +59,21 @@ class RequestHandler:
                 top_p=request_body.get("top_p"),
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
+            generate = self.engine.generate
+            generate_kwargs = {
+                "tokenizer": self.tokenizer,
+                "max_new_tokens": max_tokens,
+                "temperature": temperature,
+                "top_k": request_body.get("top_k"),
+                "top_p": request_body.get("top_p"),
+            }
+            try:
+                signature = inspect.signature(generate)
+                if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
+                    generate_kwargs = {k: v for k, v in generate_kwargs.items() if k in signature.parameters}
+            except (TypeError, ValueError):
+                pass
+            raw_gen = generate(prompt, **generate_kwargs)
             completion_text = raw_gen[len(prompt):] if isinstance(raw_gen, str) and raw_gen.startswith(prompt) else raw_gen
             try:
                 completion_tokens = self.tokenizer.encode(completion_text, add_bos=False)
@@ -70,7 +85,10 @@ class RequestHandler:
 
         response_text = completion_text if completion_text is not None else self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
         completion_count = max(0, len(generated_tokens) - len(prompt_tokens))
-        stop_ids = getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", [])
+        stop_ids = set(getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", []))
+        tokenizer_eos = getattr(getattr(self.tokenizer, "vocab", None), "eos_token_id", None)
+        if tokenizer_eos is not None:
+            stop_ids.add(tokenizer_eos)
         finish_reason = "stop" if generated_tokens and generated_tokens[-1] in stop_ids else "length"
 
         return {
@@ -114,3 +132,4 @@ class RequestHandler:
                 }
             ]
         }
+

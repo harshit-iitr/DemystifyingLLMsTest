@@ -44,7 +44,7 @@ class FeedForward(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
         
         if d_ffn is not None:
             self.d_ffn = d_ffn
@@ -71,3 +71,4 @@ class FeedForward(nn.Module):
         hidden = self.activation(self.linear1(x))
         out = self.linear2(self.dropout(hidden))
         return out
+

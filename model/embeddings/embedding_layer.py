@@ -51,9 +51,9 @@ class EmbeddingLayer(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.vocab_size = vocab_size or getattr(cfg, "vocab_size", 50257)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
-        self.max_seq_len = max_seq_len or getattr(cfg, "max_seq_len", 1024)
+        self.vocab_size = vocab_size if vocab_size is not None else getattr(cfg, "vocab_size", 50257)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
+        self.max_seq_len = max_seq_len if max_seq_len is not None else getattr(cfg, "max_seq_len", 1024)
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
         self.token_embedding = TokenEmbedding(
@@ -99,3 +99,4 @@ class EmbeddingLayer(nn.Module):
         embeddings = tok_emb + pos_emb
 
         return self.dropout(embeddings)
+
