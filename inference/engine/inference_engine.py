@@ -104,6 +104,19 @@ class InferenceEngine:
         tokens = list(prompt_tokens)
         if not tokens:
             return []
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("InferenceEngine has no callable model")
+        if temp < 0 or not torch.isfinite(torch.tensor(float(temp))).item():
+            raise ValueError(f"temperature must be non-negative and finite, got {temp}")
+        if penalty <= 0 or not torch.isfinite(torch.tensor(float(penalty))).item():
+            raise ValueError(f"repetition_penalty must be positive and finite, got {penalty}")
+        if p is not None and (not torch.isfinite(torch.tensor(float(p))).item() or p < 0 or p > 1):
+            raise ValueError(f"top_p must be in [0, 1], got {p}")
+
+        generator = None
+        if self.inference_config.seed is not None:
+            generator = torch.Generator(device=self.device)
+            generator.manual_seed(self.inference_config.seed)
 
         # Autoregressive generation loop
         supports_cache = self.inference_config.use_kv_cache and isinstance(self.model, FullTransformerModel)
@@ -113,34 +126,30 @@ class InferenceEngine:
                 model_tokens = tokens[-1:] if kv_cache is not None and kv_cache.get_seq_length() > 0 else tokens
                 input_tensor = torch.tensor([model_tokens], dtype=torch.long, device=self.device)
 
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor, kv_cache=kv_cache) if kv_cache is not None else self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+                logits = self.model(input_tensor, kv_cache=kv_cache) if kv_cache is not None else self.model(input_tensor)
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                if not isinstance(logits, torch.Tensor) or logits.ndim != 3:
+                    raise ValueError("model must return logits with shape (batch_size, seq_len, vocab_size)")
+                next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
-                        if penalty != 1.0:
-                            from inference.sampling.repetition_penalty import apply_repetition_penalty
-                            next_token_logits = apply_repetition_penalty(
-                                next_token_logits, tokens, penalty=penalty
-                            )
-                        if k is not None and k > 0:
-                            from inference.sampling.top_k import apply_top_k
-                            next_token_logits = apply_top_k(next_token_logits, k)
-                        if p is not None and p < 1.0:
-                            from inference.sampling.top_p import apply_top_p
-                            next_token_logits = apply_top_p(next_token_logits, p)
+                if penalty != 1.0:
+                    from inference.sampling.repetition_penalty import apply_repetition_penalty
+                    next_token_logits = apply_repetition_penalty(
+                        next_token_logits, tokens, penalty=penalty
+                    )
+                if k is not None and k > 0:
+                    from inference.sampling.top_k import apply_top_k
+                    next_token_logits = apply_top_k(next_token_logits, k)
+                if p is not None and p < 1.0:
+                    from inference.sampling.top_p import apply_top_p
+                    next_token_logits = apply_top_p(next_token_logits, p)
 
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                if temp > 0:
+                    probs = torch.softmax(next_token_logits / temp, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1, generator=generator).item()
                 else:
-                    self._failed = True
-                    next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    next_token = torch.argmax(next_token_logits, dim=-1).item()
 
                 tokens.append(int(next_token))
 
@@ -159,14 +168,9 @@ class InferenceEngine:
         """
         End-to-end string-to-string text generation.
         """
-        self._failed = False
-
         # Tokenize prompt
         if tokenizer is not None and hasattr(tokenizer, "encode"):
-            try:
-                prompt_ids = tokenizer.encode(prompt)
-            except Exception:
-                prompt_ids = [ord(c) for c in prompt]
+            prompt_ids = tokenizer.encode(prompt)
         else:
             prompt_ids = [ord(c) for c in prompt]
 
@@ -177,13 +181,7 @@ class InferenceEngine:
             **kwargs
         )
 
-        # Decode generated tokens
-        if not getattr(self, "_failed", False) and tokenizer is not None and hasattr(tokenizer, "decode"):
-            try:
-                return tokenizer.decode(output_ids)
-            except Exception:
-                pass
-
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation
+        # Decode the actual generated sequence; never substitute synthetic output.
+        if tokenizer is not None and hasattr(tokenizer, "decode"):
+            return tokenizer.decode(output_ids)
+        return "".join(chr(token) for token in output_ids if 0 <= token <= 0x10FFFF)
