@@ -46,22 +46,16 @@ class RequestHandler:
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
-            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-                response_text = self.tokenizer.decode(generated_tokens)
-            else:
-                response_text = "".join(chr(t) if 0 <= t < 128 else "" for t in generated_tokens)
-        elif self.engine is not None and hasattr(self.engine, "generate"):
-            response_text = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-                generated_tokens = self.tokenizer.encode(response_text)
-            else:
-                generated_tokens = [ord(c) for c in response_text]
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-                response_text = self.tokenizer.decode(generated_tokens)
-            else:
-                response_text = "".join(chr(t) if 0 <= t < 128 else "" for t in generated_tokens)
+            generated_tokens = list(prompt_tokens)
+
+        # Return only the newly generated continuation, decoded to text
+        completion_tokens = generated_tokens[len(prompt_tokens):]
+        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+            response_text = self.tokenizer.decode(completion_tokens)
+        else:
+            response_text = "".join(chr(t) for t in completion_tokens if 0 <= t < 0x110000)
+        finish_reason = "length" if len(completion_tokens) >= max_tokens else "stop"
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -73,12 +67,12 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
+                "completion_tokens": len(completion_tokens),
                 "total_tokens": len(generated_tokens)
             }
         }

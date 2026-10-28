@@ -8,6 +8,8 @@ import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
+from config.constants import EOS_TOKEN_ID
+from inference.sampling import Sampler
 from utils.logging_utils import get_logger
 
 logger = get_logger("inference_engine")
@@ -27,13 +29,19 @@ class FullTransformerModel(nn.Module):
         self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
 
-        if getattr(config, "tie_weights", True):
-            from model.heads.weight_tying import tie_weights
+        if getattr(config, "tie_weights", False):
+            from model.heads import tie_weights
             tie_weights(self.lm_head, self.embeddings.token_embedding)
 
-    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
-        h = self.blocks(h, **kwargs)
+    @property
+    def num_layers(self) -> int:
+        return len(self.blocks)
+
+    def forward(self, input_ids: torch.Tensor, kv_cache: Optional[Any] = None, **kwargs) -> torch.Tensor:
+        # With a KV cache, new tokens continue from the cached sequence position
+        offset = kv_cache.get_seq_length() if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
+        h = self.blocks(h, kv_cache=kv_cache, **kwargs)
         logits = self.lm_head(h)
         return logits
 
@@ -68,7 +76,8 @@ class InferenceEngine:
                 logger.debug(f"Could not build FullTransformerModel: {e}")
                 self.model = None
 
-        self._prepare_model()
+        if isinstance(self.model, nn.Module):
+            self.model = self.model.to(self.device)
 
     def _prepare_model(self) -> None:
         """
@@ -95,47 +104,37 @@ class InferenceEngine:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
+        sampler = Sampler(
+            temperature=max(temp, 0.0),
+            top_k=top_k if top_k is not None else self.inference_config.top_k,
+            top_p=top_p if top_p is not None else self.inference_config.top_p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
+        max_context = getattr(self.model_config, "max_seq_len", None)
         tokens = list(prompt_tokens)
 
         # Autoregressive generation loop
         with torch.no_grad():
             for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+                # Keep the input within the model's context window
+                context = tokens[-max_context:] if max_context else tokens
+                input_tensor = torch.tensor([context], dtype=torch.long, device=self.device)
 
                 if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
-
-                        k = top_k if top_k is not None else getattr(self.inference_config, "top_k", 0)
-                        p = top_p if top_p is not None else getattr(self.inference_config, "top_p", 1.0)
-
-                        cur_logits = next_token_logits.clone()
-                        if k > 0:
-                            from inference.sampling.top_k import apply_top_k
-                            cur_logits = apply_top_k(cur_logits, k=k)
-                        if p < 1.0:
-                            from inference.sampling.top_p import apply_top_p
-                            cur_logits = apply_top_p(cur_logits, p=p)
-
-                        if temp > 0:
-                            probs = torch.softmax(cur_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(cur_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    logits = self.model(input_tensor)
+                    if isinstance(logits, tuple):
+                        logits = logits[0]
+                    next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+                    next_token = sampler.sample(next_token_logits, generated_tokens=tokens).item()
                 else:
                     self._failed = True
                     next_token = (tokens[-1] + 1) % self.model_config.vocab_size
 
                 tokens.append(int(next_token))
 
-                stop_ids = set(self.inference_config.stop_token_ids)
-                from config.constants import EOS_TOKEN_ID
-                stop_ids.add(EOS_TOKEN_ID)
-                if next_token in stop_ids:
+                if next_token in self.inference_config.stop_token_ids:
+                    break
+                if self.inference_config.early_stopping and next_token == EOS_TOKEN_ID:
                     break
 
         return tokens
@@ -176,6 +175,6 @@ class InferenceEngine:
             except Exception:
                 pass
 
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
+        # Prompt was character-encoded (no tokenizer): decode continuation the same way
+        continuation = "".join(chr(t) for t in output_ids[len(prompt_ids):] if 0 <= t < 0x110000)
         return prompt + continuation

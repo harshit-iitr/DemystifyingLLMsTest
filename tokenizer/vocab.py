@@ -18,7 +18,7 @@ class Vocabulary:
 
         self.add_token(PAD_TOKEN, 0)
         self.add_token(UNK_TOKEN, 1)
-        self.add_token(BOS_TOKEN, 50256)
+        self.add_token(EOS_TOKEN, self.eos_token_id)
 
         if vocab_dict is not None:
             for token, idx in vocab_dict.items():
@@ -32,6 +32,8 @@ class Vocabulary:
             return self._token_to_id[token]
         if idx is None:
             idx = len(self._token_to_id)
+            while idx in self._id_to_token or idx in Vocabulary._shared_id_to_token:
+                idx += 1
         self._token_to_id[token] = idx
         self._id_to_token[idx] = token
         Vocabulary._shared_vocab[token] = idx

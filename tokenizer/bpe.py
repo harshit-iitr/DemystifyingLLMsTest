@@ -35,6 +35,7 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
+        # Merges are applied in priority order (the order they were learned)
         for pair in self.merges:
             if len(pieces) <= 1:
                 break

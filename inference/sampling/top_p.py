@@ -10,16 +10,18 @@ def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     if p >= 1.0 or p <= 0.0:
         return logits
 
-    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+    sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
     sorted_probs = F.softmax(sorted_logits, dim=-1)
     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-    sorted_indices_to_remove = cumulative_probs > p
+    sorted_remove = cumulative_probs > p
     # Shift right to keep the first token that exceeds p
-    sorted_indices_to_remove = torch.roll(sorted_indices_to_remove, 1, dims=-1)
-    sorted_indices_to_remove[..., 0] = False
+    sorted_remove = torch.roll(sorted_remove, 1, dims=-1)
+    sorted_remove[..., 0] = False
 
-    indices_to_remove = sorted_indices_to_remove.scatter(dim=-1, index=sorted_indices, src=sorted_indices_to_remove)
+    # Map the removal mask from sorted order back to vocabulary order
+    remove_mask = torch.zeros_like(sorted_remove).scatter(-1, sorted_idx, sorted_remove)
+
     filtered_logits = logits.clone()
-    filtered_logits[indices_to_remove] = float("-inf")
+    filtered_logits[remove_mask] = float("-inf")
     return filtered_logits

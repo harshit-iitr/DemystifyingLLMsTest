@@ -52,21 +52,33 @@ class ServingPipeline:
         else:
             tokens = [ord(c) for c in text]
 
-        if hasattr(self.model, "generate"):
-            return self.model.generate(text, tokenizer=self.tokenizer, max_new_tokens=max_new_tokens)
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
-        # Step 2: Model Forward Execution
+        # Step 2: Autoregressive generation
         if self.model is not None and callable(self.model):
-            input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
-            output = self.model(input_tensor)
+            from inference.generation import autoregressive_generate
+            from config.constants import EOS_TOKEN_ID
+
+            n_new = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
+            # Never generate past the model's context window
+            max_len = getattr(self.config, "max_seq_len", None)
+            if max_len is not None:
+                n_new = max(0, min(n_new, max_len - input_ids.size(1)))
+            if hasattr(self.model, "eval"):
+                self.model.eval()
+            with torch.no_grad():
+                output_ids = autoregressive_generate(
+                    self.model,
+                    input_ids,
+                    max_new_tokens=n_new,
+                    eos_token_id=EOS_TOKEN_ID if self.inference_config.early_stopping else None,
+                )
+            out_tokens = output_ids.squeeze(0).tolist()
         else:
-            output = None
+            out_tokens = tokens
 
         # Step 3: Decoding
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
+            return self.tokenizer.decode(out_tokens)
 
         return f"{text} [processed]"

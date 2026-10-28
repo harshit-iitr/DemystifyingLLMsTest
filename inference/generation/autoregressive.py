@@ -23,9 +23,10 @@ def autoregressive_generate(
 
     kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
 
-    for _ in range(max_new_tokens):
+    for step in range(max_new_tokens):
         if kv_cache is not None:
-            model_inputs = generated
+            # After the prefill step only the newest token needs to be fed; past K/V come from the cache
+            model_inputs = generated if step == 0 else generated[:, -1:]
             logits = model(model_inputs, kv_cache=kv_cache)
         else:
             logits = model(generated)
