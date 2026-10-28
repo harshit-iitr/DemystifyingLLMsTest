@@ -24,11 +24,13 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        kv_cache = kwargs.get("kv_cache")
+        offset = kv_cache.get_seq_length() if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
         h = self.blocks(h, **kwargs)
         logits = self.lm_head(h)
         return logits
@@ -63,13 +65,15 @@ class InferenceEngine:
             except Exception as e:
                 logger.debug(f"Could not build FullTransformerModel: {e}")
                 self.model = None
+        if isinstance(self.model, nn.Module):
+            self.model.to(self.device)
 
     def _prepare_model(self) -> None:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
         if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+            self.model.eval()
 
     def generate_tokens(
         self,
@@ -90,6 +94,8 @@ class InferenceEngine:
 
         temp = temperature if temperature is not None else self.inference_config.temperature
         tokens = list(prompt_tokens)
+        if not tokens:
+            return []
 
         # Autoregressive generation loop
         with torch.no_grad():
@@ -100,6 +106,13 @@ class InferenceEngine:
                     try:
                         logits = self.model(input_tensor)
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+
+                        if top_k is not None and top_k > 0:
+                            from inference.sampling.top_k import apply_top_k
+                            next_token_logits = apply_top_k(next_token_logits, top_k)
+                        if top_p is not None and top_p < 1.0:
+                            from inference.sampling.top_p import apply_top_p
+                            next_token_logits = apply_top_p(next_token_logits, top_p)
 
                         if temp > 0:
                             probs = torch.softmax(next_token_logits / temp, dim=-1)
@@ -130,7 +143,6 @@ class InferenceEngine:
         """
         End-to-end string-to-string text generation.
         """
-        self._prepare_model()
         self._failed = False
 
         # Tokenize prompt
