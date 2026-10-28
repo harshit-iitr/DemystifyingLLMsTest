@@ -18,7 +18,6 @@ class Vocabulary:
 
         self.add_token(PAD_TOKEN, 0)
         self.add_token(UNK_TOKEN, 1)
-        self.add_token(BOS_TOKEN, self.bos_token_id)
 
         if vocab_dict is not None:
             for token, idx in vocab_dict.items():
