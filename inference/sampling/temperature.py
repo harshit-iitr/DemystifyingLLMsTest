@@ -1,12 +1,13 @@
 """Module implementation."""
 import torch
-import torch.nn.functional as F
+import math
 
 
-def apply_temperature(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
+def apply_temperature(logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
     """
     Apply temperature scaling to logits.
     """
-    if temperature <= 0:
+    if not math.isfinite(temperature) or temperature <= 0:
         raise ValueError("temperature must be greater than zero")
     return logits / temperature
+

@@ -1,6 +1,6 @@
 """Module implementation."""
 import torch
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Iterable
 from .kv_cache import KVCache
 from .stop_criteria import StopCriteria
 
@@ -12,6 +12,7 @@ def autoregressive_generate(
     eos_token_id: Optional[int] = None,
     sampler_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     use_cache: bool = False,
+    stop_token_ids: Optional[Iterable[int]] = None,
 ) -> torch.Tensor:
     """
     Generate tokens autoregressively.
@@ -24,6 +25,11 @@ def autoregressive_generate(
         raise ValueError("input_ids must have shape (batch_size, non-zero sequence length)")
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
+    stop_ids = set(stop_token_ids or ())
+    if eos_token_id is not None:
+        stop_ids.add(eos_token_id)
+    if any(token_id < 0 for token_id in stop_ids):
+        raise ValueError("stop token IDs must be non-negative")
 
     kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
 
@@ -53,7 +59,8 @@ def autoregressive_generate(
 
         if generated.size(1) >= stop_criteria.max_length:
             break
-        if eos_token_id is not None and torch.all(next_token == eos_token_id):
+        if stop_ids and bool(torch.isin(next_token, torch.tensor(sorted(stop_ids), device=next_token.device)).all()):
             break
 
     return generated
+

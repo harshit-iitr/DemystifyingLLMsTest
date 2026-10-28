@@ -61,9 +61,11 @@ class ServingPipeline:
         # Step 2: Model Forward Execution
         if hasattr(self.model, "to"):
             self.model.to(self.device)
-        self.model.eval()
+        if hasattr(self.model, "eval"):
+            self.model.eval()
         from inference.generation.autoregressive import autoregressive_generate
         from inference.sampling import Sampler
+        import inspect
         sampler = Sampler(
             temperature=self.inference_config.temperature,
             top_k=self.inference_config.top_k,
@@ -81,13 +83,26 @@ class ServingPipeline:
             history.extend(next_ids.detach().cpu().tolist())
             return next_ids
 
+        forward = getattr(self.model, "forward", self.model)
+        try:
+            signature = inspect.signature(forward)
+            supports_cache = "kv_cache" in signature.parameters or any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
+            )
+        except (TypeError, ValueError):
+            supports_cache = False
+
         with torch.no_grad():
             output_ids = autoregressive_generate(
                 self.model, input_ids,
                 max_new_tokens=(self.inference_config.max_new_tokens if max_new_tokens is None else max_new_tokens),
                 eos_token_id=getattr(getattr(self.tokenizer, "vocab", None), "eos_token_id", None),
                 sampler_fn=sample_next,
+                use_cache=self.inference_config.use_kv_cache and supports_cache,
+                stop_token_ids=self.inference_config.stop_token_ids,
             )
 
         # Step 3: Decoding
         return self.tokenizer.decode(output_ids.squeeze(0).tolist())
+

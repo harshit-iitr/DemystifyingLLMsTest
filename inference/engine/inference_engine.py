@@ -115,30 +115,43 @@ class InferenceEngine:
             generator = torch.Generator(device=self.device)
             generator.manual_seed(self.inference_config.seed)
 
-        # Autoregressive generation loop
-        with torch.no_grad():
-            for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        if self.model is None or not callable(self.model):
+            self._failed = True
+            raise RuntimeError("No callable model is available for inference")
 
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+        from inference.generation.autoregressive import autoregressive_generate
 
-                        next_token = sampler.sample(next_token_logits, tokens, generator=generator).item()
-                    except Exception:
-                        self._failed = True
-                        raise
-                else:
-                    self._failed = True
-                    raise RuntimeError("No callable model is available for inference")
+        input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
-                tokens.append(int(next_token))
+        def sample_next(logits: torch.Tensor) -> torch.Tensor:
+            next_token = sampler.sample(logits, tokens, generator=generator)
+            tokens.extend(next_token.detach().cpu().reshape(-1).tolist())
+            return next_token
 
-                if next_token in self.inference_config.stop_token_ids:
-                    break
+        import inspect
+        forward = getattr(self.model, "forward", self.model)
+        try:
+            supports_cache = "kv_cache" in inspect.signature(forward).parameters or any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in inspect.signature(forward).parameters.values()
+            )
+        except (TypeError, ValueError):
+            supports_cache = False
 
-        return tokens
+        try:
+            with torch.no_grad():
+                output = autoregressive_generate(
+                    self.model,
+                    input_tensor,
+                    max_new_tokens=max_tokens,
+                    sampler_fn=sample_next,
+                    use_cache=self.inference_config.use_kv_cache and supports_cache,
+                    stop_token_ids=self.inference_config.stop_token_ids,
+                )
+        except Exception:
+            self._failed = True
+            raise
+        return output[0].detach().cpu().tolist()
 
     def generate(
         self,
@@ -172,3 +185,4 @@ class InferenceEngine:
         if tokenizer is None or not hasattr(tokenizer, "decode"):
             raise ValueError("A tokenizer with encode/decode methods is required")
         return tokenizer.decode(output_ids)
+
