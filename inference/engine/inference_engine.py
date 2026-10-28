@@ -26,6 +26,8 @@ class FullTransformerModel(nn.Module):
         self.embeddings = EmbeddingLayer(config=config)
         self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        if getattr(config, "tie_weights", False):
+            self.lm_head.tie_weights(self.embeddings.token_embedding.embedding.weight)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         kv_cache = kwargs.get("kv_cache")
@@ -81,7 +83,8 @@ class InferenceEngine:
         max_new_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         top_k: Optional[int] = None,
-        top_p: Optional[float] = None
+        top_p: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
     ) -> List[int]:
         """
         Generate a list of token IDs autoregressively from input token sequence.
@@ -93,6 +96,9 @@ class InferenceEngine:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
+        k = top_k if top_k is not None else self.inference_config.top_k
+        p = top_p if top_p is not None else self.inference_config.top_p
+        penalty = repetition_penalty if repetition_penalty is not None else self.inference_config.repetition_penalty
         tokens = list(prompt_tokens)
         if not tokens:
             return []
@@ -107,12 +113,17 @@ class InferenceEngine:
                         logits = self.model(input_tensor)
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
-                        if top_k is not None and top_k > 0:
+                        if penalty != 1.0:
+                            from inference.sampling.repetition_penalty import apply_repetition_penalty
+                            next_token_logits = apply_repetition_penalty(
+                                next_token_logits, tokens, penalty=penalty
+                            )
+                        if k is not None and k > 0:
                             from inference.sampling.top_k import apply_top_k
-                            next_token_logits = apply_top_k(next_token_logits, top_k)
-                        if top_p is not None and top_p < 1.0:
+                            next_token_logits = apply_top_k(next_token_logits, k)
+                        if p is not None and p < 1.0:
                             from inference.sampling.top_p import apply_top_p
-                            next_token_logits = apply_top_p(next_token_logits, top_p)
+                            next_token_logits = apply_top_p(next_token_logits, p)
 
                         if temp > 0:
                             probs = torch.softmax(next_token_logits / temp, dim=-1)

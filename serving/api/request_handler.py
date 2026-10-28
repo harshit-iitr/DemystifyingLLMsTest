@@ -39,32 +39,54 @@ class RequestHandler:
         else:
             prompt_tokens = [ord(c) for c in prompt]
 
-        # Generate continuation
+        completion_text = None
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
+            completion_tokens = generated_tokens[len(prompt_tokens):]
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            if isinstance(raw_gen, str):
+                completion_text = raw_gen[len(prompt):] if raw_gen.startswith(prompt) else raw_gen
+                if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                    try:
+                        completion_tokens = self.tokenizer.encode(completion_text, add_bos=False)
+                    except TypeError:
+                        completion_tokens = self.tokenizer.encode(completion_text)
+                else:
+                    completion_tokens = [ord(char) for char in completion_text]
+                generated_tokens = prompt_tokens + completion_tokens
+            else:
+                generated_tokens = list(raw_gen)
+                completion_tokens = generated_tokens[len(prompt_tokens):]
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            completion_tokens = []
+            generated_tokens = list(prompt_tokens)
 
-        response_text = generated_tokens
+        if completion_text is None:
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                completion_text = self.tokenizer.decode(completion_tokens)
+            else:
+                completion_text = "".join(chr(token) for token in completion_tokens if 0 <= token <= 0x10FFFF)
+
+        finish_reason = "stop" if any(token in completion_tokens for token in getattr(
+            getattr(self.engine, "inference_config", None), "stop_token_ids", []
+        )) else "length"
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
             "object": "text_completion",
             "created": int(time.time()),
             "model": "broken-transformer",
-            "text": response_text,
+            "text": completion_text,
             "choices": [
                 {
-                    "text": response_text,
+                    "text": completion_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
