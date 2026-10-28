@@ -178,6 +178,8 @@ class InferenceEngine:
             prompt_ids = tokenizer.encode(prompt)
         else:
             prompt_ids = [ord(c) for c in prompt]
+        if not prompt_ids:
+            prompt_ids = [self.model_config.bos_token_id if hasattr(self.model_config, "bos_token_id") else 50256]
 
         # Generate tokens
         output_ids = self.generate_tokens(

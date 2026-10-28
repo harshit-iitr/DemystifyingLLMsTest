@@ -1,5 +1,6 @@
 """Module implementation."""
 from typing import List, Dict, Tuple, Optional
+import re
 from .vocab import Vocabulary
 
 
@@ -7,7 +8,10 @@ class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
         self.vocab = vocab or Vocabulary()
         self.merges: List[Tuple[str, str]] = merges or []
-        self.vocab_size = len(self.vocab)
+
+    @property
+    def vocab_size(self) -> int:
+        return self.vocab.vocab_size
 
     def _get_stats(self, pieces: List[str]) -> Dict[Tuple[str, str], int]:
         pairs: Dict[Tuple[str, str], int] = {}
@@ -37,7 +41,9 @@ class BPETokenizer:
 
         # Merge the currently available pair with the best (earliest) rank,
         # then recompute candidates because a merge changes neighboring pairs.
-        ranked_merges = {pair: rank for rank, pair in enumerate(self.merges)}
+        ranked_merges = {}
+        for rank, pair in enumerate(self.merges):
+            ranked_merges.setdefault(pair, rank)
         while len(pieces) > 1:
             candidates = [pair for pair in zip(pieces, pieces[1:]) if pair in ranked_merges]
             if not candidates:
@@ -49,8 +55,12 @@ class BPETokenizer:
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split():
-            if word:
+        # Keep whitespace as token content so decode(encode(text)) preserves
+        # repeated spaces, tabs, and line breaks.
+        for word in re.findall(r"\s+|\S+", text):
+            if word.isspace():
+                tokens.append(word)
+            else:
                 tokens.extend(self.bpe(word))
         return tokens
 

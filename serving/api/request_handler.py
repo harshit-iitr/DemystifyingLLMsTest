@@ -49,13 +49,19 @@ class RequestHandler:
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
             generated_text = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens
+            completion_text = generated_text[len(prompt):] if generated_text.startswith(prompt) else generated_text
+            generated_text = completion_text
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                completion_tokens = self.tokenizer.encode(completion_text, add_bos=False)
+            else:
+                completion_tokens = [ord(char) for char in completion_text]
+            generated_tokens = prompt_tokens + completion_tokens
         else:
             raise RuntimeError("No inference engine is available")
 
-        completion_tokens = generated_tokens[len(prompt_tokens):]
-        response_text = (self.tokenizer.decode(completion_tokens) if self.tokenizer is not None and hasattr(self.tokenizer, "decode")
-                         else " ".join(map(str, completion_tokens)))
+        completion_token_ids = generated_tokens[len(prompt_tokens):]
+        response_text = (self.tokenizer.decode(completion_token_ids) if self.tokenizer is not None and hasattr(self.tokenizer, "decode")
+                         else " ".join(map(str, completion_token_ids)))
         if generated_text is not None:
             response_text = generated_text
 
@@ -74,7 +80,7 @@ class RequestHandler:
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
+                "completion_tokens": len(completion_token_ids),
                 "total_tokens": len(generated_tokens)
             }
         }

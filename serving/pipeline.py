@@ -52,13 +52,16 @@ class ServingPipeline:
             tokens = self.tokenizer.encode(text)
         else:
             tokens = [ord(c) for c in text]
+        if not tokens:
+            tokens = [50256]
 
         input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
         if self.model is None or not callable(self.model):
             raise RuntimeError("No inference model is available")
 
-        self.model.eval()
+        if hasattr(self.model, "eval"):
+            self.model.eval()
         if hasattr(self.model, "to"):
             self.model.to(self.device)
         from inference.generation import autoregressive_generate
@@ -104,7 +107,7 @@ class ServingPipeline:
                 use_cache=use_cache,
             )
 
-        output_tokens = output_ids.squeeze(0).tolist()
+        output_tokens = output_ids[0, input_ids.size(1):].tolist()
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
             return self.tokenizer.decode(output_tokens)
         return " ".join(map(str, output_tokens))

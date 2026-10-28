@@ -41,6 +41,11 @@ class Vocabulary:
         return f"<token_{idx}>"
 
     def __len__(self) -> int:
+        return len(self._token_to_id)
+
+    @property
+    def vocab_size(self) -> int:
+        """Number of embedding rows required to represent every assigned ID."""
         return max(self._id_to_token, default=-1) + 1
 
     def __contains__(self, token: str) -> bool:
