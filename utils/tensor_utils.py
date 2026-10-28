@@ -18,9 +18,9 @@ def to_device(tensor: torch.Tensor, device: Union[str, torch.device]) -> torch.T
         torch.Tensor placed on the target device.
     """
     if not isinstance(tensor, torch.Tensor):
-        return tensor
+        raise TypeError("to_device expects a torch.Tensor")
 
-    return tensor.cpu()
+    return tensor.to(device)
 
 
 def get_device(device_str: Optional[str] = None) -> torch.device:
@@ -61,6 +61,10 @@ def pad_sequence(
     if not sequences:
         return torch.empty(0, dtype=torch.long)
 
+    if side not in ("left", "right"):
+        raise ValueError(f"Unsupported padding side '{side}', must be 'left' or 'right'")
+    if any(seq.dim() != sequences[0].dim() or seq.shape[:-1] != sequences[0].shape[:-1] for seq in sequences):
+        raise ValueError("all sequences must have matching dimensions except along the last axis")
     max_len = max(seq.size(-1) for seq in sequences)
     padded = []
 

@@ -9,10 +9,10 @@ import json
 
 @dataclass
 class ModelConfig:
-    d_model: int = 769          # Hidden dimension (embedding size)
+    d_model: int = 768          # Hidden dimension (embedding size)
     n_heads: int = 12           # Number of attention heads
     n_layers: int = 12          # Number of transformer blocks
-    vocab_size: int = 50256     # Vocabulary size (GPT-2 BPE)
+    vocab_size: int = 50257     # Vocabulary size (GPT-2 BPE plus the end-of-text token)
     max_seq_len: int = 1024     # Maximum sequence context window
     ffn_multiplier: int = 4     # Expansion ratio for FFN hidden dimension
     dropout: float = 0.1        # Dropout rate for residual & attention connections
@@ -25,12 +25,24 @@ class ModelConfig:
     d_ffn: int = field(init=False)
 
     def __post_init__(self):
+        if self.n_heads <= 0 or self.d_model <= 0:
+            raise ValueError("d_model and n_heads must be positive")
         if self.d_model % self.n_heads != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"
             )
         self.d_head = self.d_model // self.n_heads
         self.d_ffn = self.d_model * self.ffn_multiplier
+        if self.vocab_size <= 0 or self.n_layers <= 0 or self.max_seq_len <= 0:
+            raise ValueError("vocab_size, n_layers, and max_seq_len must be positive")
+        if self.ffn_multiplier <= 0:
+            raise ValueError("ffn_multiplier must be positive")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must be in [0.0, 1.0)")
+        if self.layer_norm_eps <= 0 or self.initializer_range <= 0:
+            raise ValueError("layer_norm_eps and initializer_range must be positive")
+        if self.use_rotary and self.d_head % 2:
+            raise ValueError("RoPE requires an even attention head dimension")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to a serializable dictionary."""

@@ -44,12 +44,21 @@ def create_handler_class(router: RouteHandler):
             self._send_json_response(status, response)
 
         def do_POST(self):
-            content_length = int(self.headers.get("Content-Length", 0))
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                self._send_json_response(400, {"error": "Invalid Content-Length"})
+                return
+            if content_length < 0:
+                self._send_json_response(400, {"error": "Invalid Content-Length"})
+                return
             if content_length > 0:
-                raw_body = self.rfile.read(content_length).decode("utf-8")
                 try:
+                    raw_body = self.rfile.read(content_length).decode("utf-8")
                     body = json.loads(raw_body)
-                except Exception:
+                    if not isinstance(body, dict):
+                        raise ValueError("JSON request body must be an object")
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     self._send_json_response(400, {"error": "Invalid JSON payload"})
                     return
             else:
@@ -84,7 +93,7 @@ class TransformerServer:
     def start(self, background: bool = False) -> None:
         """Start the HTTP server on configured host and port."""
         handler_cls = create_handler_class(self.route_handler)
-        self._server = http.server.HTTPServer((self.config.host, self.config.port), handler_cls)
+        self._server = http.server.ThreadingHTTPServer((self.config.host, self.config.port), handler_cls)
         logger.info(f"Starting stdlib HTTP server at http://{self.config.host}:{self.config.port}")
 
         if background:

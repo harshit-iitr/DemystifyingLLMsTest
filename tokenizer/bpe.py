@@ -19,12 +19,10 @@ class BPETokenizer:
     def _merge_word(self, pieces: List[str], pair: Tuple[str, str]) -> List[str]:
         new_pieces = []
         i = 0
-        merged = False
         while i < len(pieces):
-            if not merged and i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
+            if i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
                 new_pieces.append(pair[0] + pair[1])
                 i += 2
-                merged = True
             else:
                 new_pieces.append(pieces[i])
                 i += 1
@@ -37,20 +35,22 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
+        ordered_merges = self.merges
 
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        while len(pieces) > 1:
+            stats = self._get_stats(pieces)
+            candidates = [(self.merges.index(pair), pair) for pair in stats if pair in self.merges]
+            if not candidates:
                 break
-            pieces = self._merge_word(pieces, pair)
+            _, best_pair = min(candidates, key=lambda item: item[0])
+            pieces = self._merge_word(pieces, best_pair)
 
         return pieces
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split(" "):
-            if word:
-                tokens.extend(self.bpe(word))
+        for word in text.split():
+            tokens.extend(self.bpe(word))
         return tokens
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:
