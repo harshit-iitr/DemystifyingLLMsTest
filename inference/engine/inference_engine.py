@@ -33,7 +33,7 @@ class FullTransformerModel(nn.Module):
         logits = self.lm_head(h)
         return logits
 
-
+#
 class InferenceEngine:
     """
     End-to-end inference engine managing model state, token generation loop,
