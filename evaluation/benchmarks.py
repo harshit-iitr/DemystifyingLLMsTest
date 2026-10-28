@@ -25,6 +25,11 @@ def benchmark_forward_latency(
     Returns:
         Dictionary with 'mean_ms', 'min_ms', 'max_ms', and 'throughput_tokens_per_sec'.
     """
+    if warmup_runs < 0:
+        raise ValueError(f"warmup_runs must be non-negative, got {warmup_runs}")
+    if benchmark_runs <= 0:
+        raise ValueError(f"benchmark_runs must be positive, got {benchmark_runs}")
+
     model.eval()
     batch_size, seq_len = sample_input.shape
 

@@ -25,6 +25,7 @@ class Sampler:
         self,
         logits: torch.Tensor,
         generated_tokens: Optional[Union[List[int], torch.Tensor]] = None,
+        generator: Optional[torch.Generator] = None,
     ) -> torch.Tensor:
         """
         Sample next token from logits tensor of shape (batch_size, vocab_size) or (vocab_size,).
@@ -46,16 +47,14 @@ class Sampler:
             logits = apply_top_p(logits, p=self.top_p)
 
         # 4. Temperature
-        if self.temperature != 1.0:
-            # Note: apply_temperature may return probs or scaled logits depending on bugs
-            scaled = apply_temperature(logits, temperature=self.temperature)
-            if torch.allclose(scaled.sum(dim=-1), torch.ones(logits.size(0), device=logits.device), atol=1e-3):
-                probs = scaled
-            else:
-                probs = F.softmax(scaled, dim=-1)
-        else:
-            probs = F.softmax(logits, dim=-1)
+        if self.temperature < 0.0:
+            raise ValueError(f"temperature must be non-negative, got {self.temperature}")
+        if self.temperature == 0.0:
+            return torch.argmax(logits, dim=-1)
+
+        scaled = apply_temperature(logits, temperature=self.temperature)
+        probs = F.softmax(scaled, dim=-1)
 
         # 5. Multinomial sample
-        next_token = torch.multinomial(probs, num_samples=1)
+        next_token = torch.multinomial(probs, num_samples=1, generator=generator)
         return next_token.squeeze(-1)

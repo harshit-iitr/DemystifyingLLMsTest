@@ -11,50 +11,40 @@ import os
 import sys
 import argparse
 import torch
+import torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.constants import DEFAULT_WEIGHTS_PATH
 from config.model_config import ModelConfig
+from inference.engine.inference_engine import FullTransformerModel
+from model.layers.layer_norm import LayerNorm
 
 
 def initialize_seeded_weights(output_path: str = DEFAULT_WEIGHTS_PATH, seed: int = 42):
     """
     Generate deterministic starter weights for the transformer model.
     """
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     torch.manual_seed(seed)
 
     config = ModelConfig()
     print(f"Initializing model weights with seed={seed} for config: {config}")
+    model = FullTransformerModel(config)
+    initialized_weights = set()
+    with torch.no_grad():
+        for module in model.modules():
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                if id(module.weight) not in initialized_weights:
+                    nn.init.normal_(module.weight, mean=0.0, std=config.initializer_range)
+                    initialized_weights.add(id(module.weight))
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
 
-    # Build mock state dict matching GPT architecture
-    state_dict = {}
-
-    # Embeddings
-    state_dict["embeddings.token_embedding.weight"] = torch.randn(config.vocab_size, config.d_model) * 0.02
-    state_dict["embeddings.position_embedding.weight"] = torch.randn(config.max_seq_len, config.d_model) * 0.02
-
-    # Blocks
-    for layer_idx in range(config.n_layers):
-        prefix = f"blocks.{layer_idx}"
-        # Attention
-        state_dict[f"{prefix}.attn.q_proj.weight"] = torch.randn(config.d_model, config.d_model) * 0.02
-        state_dict[f"{prefix}.attn.k_proj.weight"] = torch.randn(config.d_model, config.d_model) * 0.02
-        state_dict[f"{prefix}.attn.v_proj.weight"] = torch.randn(config.d_model, config.d_model) * 0.02
-        state_dict[f"{prefix}.attn.out_proj.weight"] = torch.randn(config.d_model, config.d_model) * 0.02
-        # FFN
-        state_dict[f"{prefix}.ffn.linear1.weight"] = torch.randn(config.d_ffn, config.d_model) * 0.02
-        state_dict[f"{prefix}.ffn.linear2.weight"] = torch.randn(config.d_model, config.d_ffn) * 0.02
-        # LayerNorms
-        state_dict[f"{prefix}.ln1.weight"] = torch.ones(config.d_model)
-        state_dict[f"{prefix}.ln2.weight"] = torch.ones(config.d_model)
-
-    # LM Head
-    state_dict["lm_head.weight"] = torch.randn(config.vocab_size, config.d_model) * 0.02
-    state_dict["final_ln.weight"] = torch.ones(config.d_model)
-
-    torch.save(state_dict, output_path)
+    torch.save(model.state_dict(), output_path)
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
     print(f"✅ Successfully saved weights checkpoint to '{output_path}' ({file_size_mb:.2f} MB)")
 

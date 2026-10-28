@@ -47,6 +47,7 @@ class BlockStack(nn.Module):
 
         self.n_layers = n_layers or getattr(cfg, "n_layers", 12)
         self.d_model = d_model or getattr(cfg, "d_model", 768)
+        self.num_layers = self.n_layers
 
         self.blocks = nn.ModuleList([
             TransformerBlock(config=cfg, layer_idx=i)

@@ -5,17 +5,18 @@ Inference and text generation configuration.
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 import json
+from .constants import EOS_TOKEN_ID
 
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
     top_p: float = 0.9
     repetition_penalty: float = 1.1
-    stop_token_ids: List[int] = field(default_factory=list)
+    stop_token_ids: List[int] = field(default_factory=lambda: [EOS_TOKEN_ID])
     early_stopping: bool = True
     beam_width: int = 1         # 1 indicates greedy / stochastic sampling (non-beam)
     seed: Optional[int] = 42
@@ -51,4 +52,3 @@ class InferenceConfig:
     def from_json(cls, json_str: str) -> "InferenceConfig":
         """Instantiate configuration from JSON string."""
         return cls.from_dict(json.loads(json_str))
-
