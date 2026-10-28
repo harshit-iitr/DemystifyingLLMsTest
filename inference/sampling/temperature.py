@@ -7,6 +7,6 @@ def apply_temperature(logits: torch.Tensor, temperature: float = 0.0) -> torch.T
     """
     Apply temperature scaling to logits.
     """
-    probs = F.softmax(logits, dim=-1)
-    scaled = probs / temperature
-    return scaled
+    if temperature <= 0.0:
+        return logits
+    return logits / temperature
