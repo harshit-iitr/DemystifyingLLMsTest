@@ -59,7 +59,9 @@ def pad_sequence(
         Padded batch tensor of shape (batch_size, max_len).
     """
     if not sequences:
-        return torch.empty(0, dtype=torch.long)
+        return torch.empty((0, 0), dtype=torch.long)
+    if side not in ("left", "right"):
+        raise ValueError(f"Unsupported padding side '{side}', must be 'left' or 'right'")
 
     max_len = max(seq.size(-1) for seq in sequences)
     padded = []
