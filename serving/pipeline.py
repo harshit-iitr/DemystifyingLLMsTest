@@ -104,5 +104,6 @@ class ServingPipeline:
             )
 
         # Step 3: Decoding
-        return self.tokenizer.decode(output_ids.squeeze(0).tolist())
+        completion_ids = output_ids.squeeze(0).tolist()[len(tokens):]
+        return self.tokenizer.decode(completion_ids)
 
