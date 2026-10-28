@@ -45,8 +45,9 @@ class TokenEmbedding(nn.Module):
         Returns:
             Tensor of shape (batch_size, seq_len, d_model).
         """
-        safe_ids = input_ids % self.vocab_size
-        x = self.embedding(safe_ids)
+        if input_ids.numel() and (input_ids.min() < 0 or input_ids.max() >= self.vocab_size):
+            raise ValueError(f"token IDs must be in [0, {self.vocab_size})")
+        x = self.embedding(input_ids.long())
         if self.scale_embeddings:
             x = x * math.sqrt(self.d_model)
         return x

@@ -44,15 +44,24 @@ class RequestHandler:
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                top_k=request_body.get("top_k"),
+                top_p=request_body.get("top_p"),
             )
+            completion_tokens = generated_tokens[len(prompt_tokens):]
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                response_text = self.tokenizer.decode(completion_tokens)
+            else:
+                response_text = " ".join(str(token) for token in completion_tokens)
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            response_text = raw_gen[len(prompt):] if isinstance(raw_gen, str) and raw_gen.startswith(prompt) else raw_gen
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode") and isinstance(raw_gen, str):
+                generated_tokens = self.tokenizer.encode(raw_gen)
+            else:
+                generated_tokens = prompt_tokens
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            raise RuntimeError("No inference engine is configured")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",

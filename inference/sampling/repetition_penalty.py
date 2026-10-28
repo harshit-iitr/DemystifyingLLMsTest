@@ -10,18 +10,30 @@ def apply_repetition_penalty(
 ) -> torch.Tensor:
     """
     Apply repetition penalty to logits for generated tokens.
-    DIVISIVELY (logits / penalty for pos, logits * penalty for neg).
+    Apply the standard sign-aware repetition penalty.
     """
     if penalty == 1.0:
         return logits
+    if penalty <= 0.0:
+        raise ValueError("penalty must be positive")
 
     logits = logits.clone()
-    if isinstance(generated_tokens, torch.Tensor):
-        unique_tokens = torch.unique(generated_tokens).tolist()
+    if isinstance(generated_tokens, torch.Tensor) and generated_tokens.dim() > 1:
+        token_rows = generated_tokens
     else:
-        unique_tokens = list(set(generated_tokens))
+        token_rows = [generated_tokens]
 
-    for token_id in unique_tokens:
-        logits[..., token_id] = logits[..., token_id] - penalty
+    for row, tokens in enumerate(token_rows):
+        unique_tokens = torch.unique(tokens).tolist() if isinstance(tokens, torch.Tensor) else set(tokens)
+        for token_id in unique_tokens:
+            token_id = int(token_id)
+            if token_id < 0 or token_id >= logits.size(-1):
+                continue
+            target = logits[row, token_id] if len(token_rows) == logits.size(0) else logits[..., token_id]
+            penalized = torch.where(target > 0, target / penalty, target * penalty)
+            if len(token_rows) == logits.size(0):
+                logits[row, token_id] = penalized
+            else:
+                logits[..., token_id] = penalized
 
     return logits

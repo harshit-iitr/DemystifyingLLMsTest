@@ -21,33 +21,35 @@ def autoregressive_generate(
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
 
-    kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
+    kv_cache = KVCache(num_layers=getattr(model, "num_layers", getattr(getattr(model, "blocks", None), "n_layers", 12))) if use_cache else None
 
-    for _ in range(max_new_tokens):
-        if kv_cache is not None:
-            model_inputs = generated
-            logits = model(model_inputs, kv_cache=kv_cache)
-        else:
-            logits = model(generated)
+    if hasattr(model, "eval"):
+        model.eval()
+    with torch.no_grad():
+        for _ in range(max_new_tokens):
+            if kv_cache is not None:
+                model_inputs = generated if kv_cache.get_seq_length(0) == 0 else generated[:, -1:]
+                logits = model(model_inputs, kv_cache=kv_cache)
+            else:
+                logits = model(generated)
 
-        # Take logits for the last token position: (batch_size, vocab_size)
-        if isinstance(logits, tuple):
-            logits = logits[0]
-        next_token_logits = logits[:, -1, :]
+            # Take logits for the last token position: (batch_size, vocab_size)
+            if isinstance(logits, tuple):
+                logits = logits[0]
+            next_token_logits = logits[:, -1, :]
 
-        if sampler_fn is not None:
-            next_token = sampler_fn(next_token_logits)
-        else:
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            if sampler_fn is not None:
+                next_token = sampler_fn(next_token_logits)
+            else:
+                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
-        if next_token.dim() == 1:
-            next_token = next_token.unsqueeze(-1)
+            if next_token.dim() == 1:
+                next_token = next_token.unsqueeze(-1)
 
-        # generated = torch.cat([generated, next_token], dim=-1) is correct
-        generated = torch.cat([next_token, generated], dim=-1)
+            generated = torch.cat([generated, next_token], dim=-1)
 
-        last_id = next_token[0].item() if batch_size == 1 else None
-        if stop_criteria.should_stop(generated.size(1), last_id):
-            break
+            last_id = next_token[0].item() if batch_size == 1 else None
+            if stop_criteria.should_stop(generated.size(1), last_id):
+                break
 
     return generated
