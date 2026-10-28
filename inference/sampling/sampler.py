@@ -37,6 +37,11 @@ class Sampler:
         if self.repetition_penalty != 1.0 and generated_tokens is not None:
             logits = apply_repetition_penalty(logits, generated_tokens, penalty=self.repetition_penalty)
 
+        # Temperature scaling preserves the logits' relative ranking.
+        if self.temperature <= 0:
+            raise ValueError("temperature must be greater than zero")
+        logits = apply_temperature(logits, temperature=self.temperature)
+
         # 2. Top-K
         if self.top_k > 0:
             logits = apply_top_k(logits, k=self.top_k)
@@ -46,15 +51,7 @@ class Sampler:
             logits = apply_top_p(logits, p=self.top_p)
 
         # 4. Temperature
-        if self.temperature != 1.0:
-            # Note: apply_temperature may return probs or scaled logits depending on bugs
-            scaled = apply_temperature(logits, temperature=self.temperature)
-            if torch.allclose(scaled.sum(dim=-1), torch.ones(logits.size(0), device=logits.device), atol=1e-3):
-                probs = scaled
-            else:
-                probs = F.softmax(scaled, dim=-1)
-        else:
-            probs = F.softmax(logits, dim=-1)
+        probs = F.softmax(logits, dim=-1)
 
         # 5. Multinomial sample
         next_token = torch.multinomial(probs, num_samples=1)

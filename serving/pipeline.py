@@ -52,11 +52,27 @@ class ServingPipeline:
         else:
             tokens = [ord(c) for c in text]
 
-        input_ids = tokens
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
         # Step 2: Model Forward Execution
         if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
+            self.model.eval()
+            token_count = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
+            with torch.no_grad():
+                if token_count > 0:
+                    from inference.generation.autoregressive import autoregressive_generate
+                    generated = autoregressive_generate(
+                        self.model,
+                        input_ids,
+                        max_new_tokens=token_count,
+                        eos_token_id=(self.inference_config.stop_token_ids[0]
+                                      if self.inference_config.stop_token_ids else None),
+                        use_cache=self.inference_config.use_kv_cache,
+                    )
+                    if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                        return self.tokenizer.decode(generated[0].tolist())
+                    return "".join(chr(int(token)) for token in generated[0] if 0 <= int(token) <= 0x10FFFF)
+                output = self.model(input_ids)
         else:
             output = None
 
@@ -67,4 +83,4 @@ class ServingPipeline:
                 return self.tokenizer.decode(out_tokens)
             return self.tokenizer.decode(tokens)
 
-        return f"{text} [processed]"
+        return text

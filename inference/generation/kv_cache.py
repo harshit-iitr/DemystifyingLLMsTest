@@ -20,8 +20,8 @@ class KVCache:
         key, value shape: (batch_size, num_heads, seq_len, head_dim)
         """
         if self.k_cache[layer_idx] is None:
-            self.k_cache[layer_idx] = key
-            self.v_cache[layer_idx] = value
+            self.k_cache[layer_idx] = torch.cat((self.k_cache[layer_idx], key), dim=-2)
+            self.v_cache[layer_idx] = torch.cat((self.v_cache[layer_idx], value), dim=-2)
         else:
             self.k_cache[layer_idx] = key
             self.v_cache[layer_idx] = value

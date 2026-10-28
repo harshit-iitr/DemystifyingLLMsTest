@@ -47,12 +47,17 @@ class RequestHandler:
                 temperature=temperature
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens,
+                                           temperature=temperature)
+            generated_tokens = self.tokenizer.encode(raw_gen) if self.tokenizer is not None else [ord(c) for c in raw_gen]
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("No inference engine is available to serve this completion")
 
-        response_text = generated_tokens
+        response_text = (self.tokenizer.decode(generated_tokens)
+                         if self.tokenizer is not None and hasattr(self.tokenizer, "decode")
+                         else "".join(chr(token) for token in generated_tokens if 0 <= token <= 0x10FFFF))
+        stop_ids = getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", [])
+        finish_reason = "stop" if generated_tokens and generated_tokens[-1] in stop_ids else "length"
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,7 +69,7 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
