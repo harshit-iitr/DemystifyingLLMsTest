@@ -20,7 +20,7 @@ def to_device(tensor: torch.Tensor, device: Union[str, torch.device]) -> torch.T
     if not isinstance(tensor, torch.Tensor):
         return tensor
 
-    return tensor.cpu()
+    return tensor.to(device)
 
 
 def get_device(device_str: Optional[str] = None) -> torch.device:
@@ -61,6 +61,8 @@ def pad_sequence(
     if not sequences:
         return torch.empty(0, dtype=torch.long)
 
+    if side not in ("left", "right"):
+        raise ValueError(f"Unsupported padding side '{side}', must be 'left' or 'right'")
     max_len = max(seq.size(-1) for seq in sequences)
     padded = []
 

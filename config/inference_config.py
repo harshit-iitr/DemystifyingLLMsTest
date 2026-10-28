@@ -9,7 +9,7 @@ import json
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
@@ -32,6 +32,8 @@ class InferenceConfig:
             raise ValueError(f"top_k must be non-negative, got {self.top_k}")
         if self.repetition_penalty <= 0.0:
             raise ValueError(f"repetition_penalty must be positive, got {self.repetition_penalty}")
+        if self.beam_width < 1:
+            raise ValueError(f"beam_width must be at least 1, got {self.beam_width}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""

@@ -2,12 +2,26 @@
 HTTP API request parsing, validation, and execution handler.
 """
 
+import inspect
 import time
 import uuid
 from typing import Dict, Any, Optional, List
+import torch
 from utils.logging_utils import get_logger
 
 logger = get_logger("request_handler")
+
+
+def _call_supported(method: Any, kwargs: Dict[str, Any]) -> Any:
+    """Call an engine method with the keyword arguments its signature accepts."""
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return method(**kwargs)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
+        return method(**kwargs)
+    accepted = {name: value for name, value in kwargs.items() if name in signature.parameters}
+    return method(**accepted)
 
 
 class RequestHandler:
@@ -39,20 +53,46 @@ class RequestHandler:
         else:
             prompt_tokens = [ord(c) for c in prompt]
 
-        # Generate continuation
-        if self.engine is not None and hasattr(self.engine, "generate_tokens"):
-            generated_tokens = self.engine.generate_tokens(
-                prompt_tokens=prompt_tokens,
-                max_new_tokens=max_tokens,
-                temperature=temperature
+        if self.engine is None:
+            raise RuntimeError("No inference engine is configured")
+        if hasattr(self.engine, "generate_tokens"):
+            generation_args = {
+                "prompt_tokens": prompt_tokens,
+                "max_new_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if "top_k" in request_body:
+                generation_args["top_k"] = request_body["top_k"]
+            if "top_p" in request_body:
+                generation_args["top_p"] = request_body["top_p"]
+            generated_tokens = _call_supported(self.engine.generate_tokens, generation_args)
+            if isinstance(generated_tokens, torch.Tensor):
+                generated_tokens = generated_tokens.tolist()
+            if generated_tokens and isinstance(generated_tokens[0], list):
+                generated_tokens = generated_tokens[0]
+            if self.tokenizer is None or not hasattr(self.tokenizer, "decode"):
+                raise ValueError("A tokenizer with decode() is required")
+            has_prompt_prefix = generated_tokens[:len(prompt_tokens)] == prompt_tokens
+            completion_tokens = generated_tokens[len(prompt_tokens):] if has_prompt_prefix else generated_tokens
+            response_text = self.tokenizer.decode(completion_tokens)
+            completion_count = len(completion_tokens)
+            stop_ids = set(getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", []))
+            if not stop_ids:
+                from config.constants import EOS_TOKEN_ID
+                stop_ids.add(EOS_TOKEN_ID)
+            finish_reason = "stop" if completion_tokens and completion_tokens[-1] in stop_ids else "length"
+        elif hasattr(self.engine, "generate"):
+            response_text = _call_supported(
+                self.engine.generate,
+                {"prompt": prompt, "tokenizer": self.tokenizer,
+                 "max_new_tokens": max_tokens, "temperature": temperature},
             )
-        elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            if isinstance(response_text, str) and response_text.startswith(prompt):
+                response_text = response_text[len(prompt):]
+            completion_count = len(self.tokenizer.encode(response_text)) if self.tokenizer is not None and hasattr(self.tokenizer, "encode") else max_tokens
+            finish_reason = "length"
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            raise RuntimeError("The configured inference engine cannot generate text")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,13 +104,13 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_count,
+                "total_tokens": len(prompt_tokens) + completion_count
             }
         }
 
