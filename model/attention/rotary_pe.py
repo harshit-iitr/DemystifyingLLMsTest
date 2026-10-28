@@ -37,6 +37,10 @@ class RotaryEmbedding(nn.Module):
 
     def __init__(self, dim: int, max_seq_len: int = 2048, base: float = 10000.0):
         super().__init__()
+        if dim <= 0 or dim % 2 != 0:
+            raise ValueError("RotaryEmbedding dim must be a positive even number")
+        if max_seq_len <= 0 or base <= 0:
+            raise ValueError("max_seq_len and base must be positive")
         self.dim = dim
         self.max_seq_len = max_seq_len
         self.base = base
@@ -51,6 +55,8 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("sin_cached", emb.sin(), persistent=False)
 
     def forward(self, x: torch.Tensor, seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        if seq_len < 0 or seq_len > self.max_seq_len:
+            raise ValueError(f"seq_len must be between 0 and {self.max_seq_len}")
         cos = self.cos_cached[:seq_len, :].to(dtype=x.dtype, device=x.device)
         sin = self.sin_cached[:seq_len, :].to(dtype=x.dtype, device=x.device)
         # Reshape to (1, 1, seq_len, dim) for head broadcasting

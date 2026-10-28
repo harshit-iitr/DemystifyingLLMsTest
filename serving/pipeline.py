@@ -46,25 +46,38 @@ class ServingPipeline:
         Returns:
             Decoded completion string.
         """
-        # Step 1: Tokenization
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            tokens = self.tokenizer.encode(text)
-        else:
-            tokens = [ord(c) for c in text]
+        if self.model is None:
+            raise RuntimeError("A model is required to process a completion")
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise RuntimeError("A tokenizer with encode() and decode() is required")
 
-        input_ids = tokens
+        token_ids = self.tokenizer.encode(text)
+        vocab_size = getattr(self.config, "vocab_size", None)
+        if vocab_size is not None:
+            vocab = getattr(self.tokenizer, "vocab", None)
+            unknown_id = getattr(vocab, "unk_token_id", 1)
+            if not 0 <= unknown_id < vocab_size:
+                unknown_id = 0
+            token_ids = [
+                token_id if 0 <= token_id < vocab_size else unknown_id
+                for token_id in token_ids
+            ]
+        input_ids = torch.as_tensor(token_ids, dtype=torch.long, device=self.device).unsqueeze(0)
+        self.model.to(self.device) if hasattr(self.model, "to") else None
+        if hasattr(self.model, "eval"):
+            self.model.eval()
 
-        # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
+        with torch.no_grad():
             output = self.model(input_ids)
-        else:
-            output = None
-
-        # Step 3: Decoding
-        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
-
-        return f"{text} [processed]"
+            if max_new_tokens is not None and max_new_tokens > 0:
+                generated = input_ids
+                for _ in range(max_new_tokens):
+                    logits = output[0] if isinstance(output, tuple) else output
+                    next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                    generated = torch.cat((generated, next_token), dim=-1)
+                    output = self.model(generated)
+                output_ids = generated[0].tolist()
+            else:
+                logits = output[0] if isinstance(output, tuple) else output
+                output_ids = logits.argmax(dim=-1)[0].tolist()
+        return self.tokenizer.decode(output_ids)

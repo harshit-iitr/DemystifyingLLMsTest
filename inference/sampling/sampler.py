@@ -47,12 +47,8 @@ class Sampler:
 
         # 4. Temperature
         if self.temperature != 1.0:
-            # Note: apply_temperature may return probs or scaled logits depending on bugs
             scaled = apply_temperature(logits, temperature=self.temperature)
-            if torch.allclose(scaled.sum(dim=-1), torch.ones(logits.size(0), device=logits.device), atol=1e-3):
-                probs = scaled
-            else:
-                probs = F.softmax(scaled, dim=-1)
+            probs = scaled
         else:
             probs = F.softmax(logits, dim=-1)
 
