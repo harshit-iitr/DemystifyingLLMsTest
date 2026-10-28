@@ -61,16 +61,19 @@ class EmbeddingLayer(nn.Module):
             d_model=self.d_model
         )
 
+        self.use_rotary = bool(getattr(cfg, "use_rotary", False))
         if use_learned_pe:
             self.position_embedding = LearnedPositionEmbedding(
                 max_seq_len=self.max_seq_len,
                 d_model=self.d_model
             )
-        else:
+        elif not self.use_rotary:
             self.position_embedding = SinusoidalPositionEmbedding(
                 d_model=self.d_model,
                 max_seq_len=self.max_seq_len
             )
+        else:
+            self.position_embedding = None
 
         self.dropout = nn.Dropout(p=dropout_p)
 
@@ -94,8 +97,9 @@ class EmbeddingLayer(nn.Module):
 
         batch_size, seq_len = input_ids.shape
         tok_emb = self.token_embedding(input_ids)
-        pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
-
-        embeddings = tok_emb * pos_emb
+        embeddings = tok_emb
+        if self.position_embedding is not None:
+            pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
+            embeddings = embeddings + pos_emb
 
         return self.dropout(embeddings)

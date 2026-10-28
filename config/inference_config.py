@@ -4,18 +4,20 @@ Inference and text generation configuration.
 
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
+import math
 import json
+from .constants import EOS_TOKEN_ID
 
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
     top_p: float = 0.9
     repetition_penalty: float = 1.1
-    stop_token_ids: List[int] = field(default_factory=list)
+    stop_token_ids: List[int] = field(default_factory=lambda: [EOS_TOKEN_ID])
     early_stopping: bool = True
     beam_width: int = 1         # 1 indicates greedy / stochastic sampling (non-beam)
     seed: Optional[int] = 42
@@ -26,12 +28,16 @@ class InferenceConfig:
             raise ValueError(f"max_new_tokens must be non-negative, got {self.max_new_tokens}")
         if self.temperature < 0.0:
             raise ValueError(f"temperature must be non-negative, got {self.temperature}")
+        if not math.isfinite(self.temperature):
+            raise ValueError(f"temperature must be finite, got {self.temperature}")
         if not (0.0 <= self.top_p <= 1.0):
             raise ValueError(f"top_p must be in [0.0, 1.0], got {self.top_p}")
         if self.top_k < 0:
             raise ValueError(f"top_k must be non-negative, got {self.top_k}")
-        if self.repetition_penalty <= 0.0:
+        if not math.isfinite(self.repetition_penalty) or self.repetition_penalty <= 0.0:
             raise ValueError(f"repetition_penalty must be positive, got {self.repetition_penalty}")
+        if self.beam_width <= 0:
+            raise ValueError(f"beam_width must be positive, got {self.beam_width}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""

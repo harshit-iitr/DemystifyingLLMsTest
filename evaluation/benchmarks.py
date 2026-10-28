@@ -26,6 +26,8 @@ def benchmark_forward_latency(
         Dictionary with 'mean_ms', 'min_ms', 'max_ms', and 'throughput_tokens_per_sec'.
     """
     model.eval()
+    if warmup_runs < 0 or benchmark_runs <= 0:
+        raise ValueError("warmup_runs must be non-negative and benchmark_runs must be positive")
     batch_size, seq_len = sample_input.shape
 
     with torch.no_grad():
