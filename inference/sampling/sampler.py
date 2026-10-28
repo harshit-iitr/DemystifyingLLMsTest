@@ -1,5 +1,6 @@
 """Combined sampler (Clean)."""
 import torch
+import math
 from typing import Optional, List, Union
 from .temperature import apply_temperature
 from .top_k import apply_top_k
@@ -15,6 +16,14 @@ class Sampler:
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
     ):
+        if not math.isfinite(temperature) or temperature < 0:
+            raise ValueError("temperature must be non-negative")
+        if top_k < 0:
+            raise ValueError("top_k must be non-negative")
+        if not math.isfinite(top_p) or not 0.0 <= top_p <= 1.0:
+            raise ValueError("top_p must be in [0.0, 1.0]")
+        if not math.isfinite(repetition_penalty) or repetition_penalty <= 0:
+            raise ValueError("repetition_penalty must be positive")
         self.temperature = temperature
         self.top_k = top_k
         self.top_p = top_p

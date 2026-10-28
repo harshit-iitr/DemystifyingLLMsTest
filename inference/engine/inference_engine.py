@@ -3,14 +3,13 @@ High-level inference engine coordinating model execution, caching, and sampling.
 """
 
 from typing import Optional, List, Union, Any
+import math
 import torch
 import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
-from utils.logging_utils import get_logger
-
-logger = get_logger("inference_engine")
+from inference.generation.kv_cache import KVCache
 
 
 class FullTransformerModel(nn.Module):
@@ -26,8 +25,16 @@ class FullTransformerModel(nn.Module):
         self.embeddings = EmbeddingLayer(config=config)
         self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        self._initialize_weights(config.initializer_range)
         if getattr(config, "tie_weights", False):
             self.lm_head.tie_weights(self.embeddings.token_embedding.embedding.weight)
+
+    def _initialize_weights(self, std: float) -> None:
+        for module in self.modules():
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                nn.init.normal_(module.weight, mean=0.0, std=std)
+                if isinstance(module, nn.Linear) and module.bias is not None:
+                    nn.init.zeros_(module.bias)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         cache = kwargs.get("kv_cache")
@@ -51,10 +58,7 @@ class InferenceEngine:
         model: Optional[Any] = None,
         device: Optional[Union[str, torch.device]] = None
     ):
-        try:
-            self.model_config = model_config or ModelConfig()
-        except Exception:
-            self.model_config = ModelConfig(d_model=768, vocab_size=50257)
+        self.model_config = model_config if model_config is not None else ModelConfig()
 
         self.inference_config = inference_config or InferenceConfig()
         self.inference_config.validate()
@@ -63,14 +67,7 @@ class InferenceEngine:
         if self.inference_config.seed is not None:
             self.generator.manual_seed(self.inference_config.seed)
 
-        if model is not None:
-            self.model = model
-        else:
-            try:
-                self.model = FullTransformerModel(self.model_config)
-            except Exception as e:
-                logger.debug(f"Could not build FullTransformerModel: {e}")
-                self.model = None
+        self.model = model if model is not None else FullTransformerModel(self.model_config)
 
     def _prepare_model(self) -> None:
         """
@@ -95,48 +92,74 @@ class InferenceEngine:
         self._prepare_model()
 
         max_tokens = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
-        if max_tokens <= 0:
+        if max_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative")
+        if max_tokens == 0:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
         top_k = top_k if top_k is not None else self.inference_config.top_k
         top_p = top_p if top_p is not None else self.inference_config.top_p
+        if not math.isfinite(temp) or temp < 0:
+            raise ValueError("temperature must be non-negative")
+        if top_k < 0:
+            raise ValueError("top_k must be non-negative")
+        if not math.isfinite(top_p) or not 0.0 <= top_p <= 1.0:
+            raise ValueError("top_p must be in [0.0, 1.0]")
         tokens = list(prompt_tokens)
         if not tokens:
             from config.constants import BOS_TOKEN_ID
             tokens = [BOS_TOKEN_ID]
 
+        if self.inference_config.beam_width > 1:
+            from inference.generation import BeamSearch
+            from config.constants import EOS_TOKEN_ID
+            input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+            with torch.no_grad():
+                result = BeamSearch(
+                    beam_width=self.inference_config.beam_width,
+                    max_length=max_tokens,
+                    eos_token_id=EOS_TOKEN_ID,
+                    early_stopping=self.inference_config.early_stopping,
+                ).search(self.model, input_tensor)
+            return result[0].tolist()
+
         # Autoregressive generation loop
+        supports_cache = (
+            self.inference_config.use_kv_cache
+            and isinstance(self.model, FullTransformerModel)
+        )
+        kv_cache = KVCache(self.model.blocks.n_layers) if supports_cache else None
+        from inference.sampling import Sampler
+        from config.constants import EOS_TOKEN_ID
+        stop_ids = self.inference_config.stop_token_ids or [EOS_TOKEN_ID]
         with torch.no_grad():
             for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+                model_tokens = tokens if kv_cache is None or kv_cache.get_seq_length(0) == 0 else tokens[-1:]
+                input_tensor = torch.tensor([model_tokens], dtype=torch.long, device=self.device)
 
                 if self.model is None or not callable(self.model):
                     raise RuntimeError("No model is configured for inference")
-                logits = self.model(input_tensor)
+                logits = self.model(input_tensor, kv_cache=kv_cache) if kv_cache is not None else self.model(input_tensor)
                 if isinstance(logits, tuple):
                     logits = logits[0]
                 next_token_logits = logits[:, -1, :]
 
-                if temp > 0:
-                    from inference.sampling import Sampler
-                    sampler = Sampler(
-                        temperature=temp,
-                        top_k=top_k,
-                        top_p=top_p,
-                        repetition_penalty=self.inference_config.repetition_penalty,
-                    )
-                    next_token = sampler.sample(
-                        next_token_logits,
-                        generated_tokens=tokens,
-                        generator=self.generator,
-                    ).item()
-                else:
-                    next_token = torch.argmax(next_token_logits, dim=-1).item()
+                sampler = Sampler(
+                    temperature=temp,
+                    top_k=top_k,
+                    top_p=top_p,
+                    repetition_penalty=self.inference_config.repetition_penalty,
+                )
+                next_token = sampler.sample(
+                    next_token_logits,
+                    generated_tokens=tokens,
+                    generator=self.generator,
+                ).item()
 
                 tokens.append(int(next_token))
 
-                if next_token in self.inference_config.stop_token_ids:
+                if next_token in stop_ids:
                     break
 
         return tokens
@@ -153,10 +176,7 @@ class InferenceEngine:
         """
         # Tokenize prompt
         if tokenizer is not None and hasattr(tokenizer, "encode"):
-            try:
-                prompt_ids = tokenizer.encode(prompt)
-            except Exception:
-                prompt_ids = [ord(c) for c in prompt]
+            prompt_ids = tokenizer.encode(prompt)
         else:
             prompt_ids = [ord(c) for c in prompt]
 
@@ -169,4 +189,9 @@ class InferenceEngine:
 
         if tokenizer is not None and hasattr(tokenizer, "decode"):
             return tokenizer.decode(output_ids)
-        return "".join(chr(token) for token in output_ids if 0 <= token <= 0x10FFFF and not 0xD800 <= token <= 0xDFFF)
+        from config.constants import BOS_TOKEN_ID, EOS_TOKEN_ID, PAD_TOKEN_ID
+        special_ids = {BOS_TOKEN_ID, EOS_TOKEN_ID, PAD_TOKEN_ID}
+        return "".join(
+            chr(token) for token in output_ids
+            if token not in special_ids and 0 <= token <= 0x10FFFF and not 0xD800 <= token <= 0xDFFF
+        )

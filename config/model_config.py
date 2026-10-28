@@ -25,14 +25,20 @@ class ModelConfig:
     d_ffn: int = field(init=False)
 
     def __post_init__(self):
-        if self.n_heads <= 0 or self.d_model <= 0:
-            raise ValueError("d_model and n_heads must be positive")
+        if min(self.d_model, self.n_heads, self.n_layers, self.vocab_size, self.max_seq_len, self.ffn_multiplier) <= 0:
+            raise ValueError("model dimensions, layer counts, vocabulary, and FFN multiplier must be positive")
         if self.d_model % self.n_heads != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"
             )
         self.d_head = self.d_model // self.n_heads
         self.d_ffn = self.d_model * self.ffn_multiplier
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must be in [0.0, 1.0)")
+        if self.layer_norm_eps <= 0:
+            raise ValueError("layer_norm_eps must be positive")
+        if self.initializer_range <= 0:
+            raise ValueError("initializer_range must be positive")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to a serializable dictionary."""

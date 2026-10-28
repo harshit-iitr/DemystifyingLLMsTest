@@ -1,12 +1,15 @@
 """Nucleus top-p sampling."""
 import torch
 import torch.nn.functional as F
+import math
 
 
 def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     """
     Nucleus sampling.
     """
+    if not math.isfinite(p):
+        raise ValueError("top_p must be finite")
     if p >= 1.0:
         return logits
     if p < 0.0:

@@ -4,10 +4,21 @@ from typing import List, Tuple, Optional
 
 
 class BeamSearch:
-    def __init__(self, beam_width: int = 4, max_length: int = 50, eos_token_id: Optional[int] = None):
+    def __init__(
+        self,
+        beam_width: int = 4,
+        max_length: int = 50,
+        eos_token_id: Optional[int] = None,
+        early_stopping: bool = True,
+    ):
+        if beam_width <= 0:
+            raise ValueError("beam_width must be positive")
+        if max_length < 0:
+            raise ValueError("max_length must be non-negative")
         self.beam_width = beam_width
         self.max_length = max_length
         self.eos_token_id = eos_token_id
+        self.early_stopping = early_stopping
 
     def search(self, model: torch.nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
         """
@@ -15,8 +26,13 @@ class BeamSearch:
         """
         batch_size = input_ids.size(0)
         # For simplicity, supports batch_size = 1
+        if batch_size != 1:
+            raise ValueError("BeamSearch currently supports batch_size=1")
+        if input_ids.size(1) == 0:
+            raise ValueError("input_ids must contain at least one token")
         beams: List[Tuple[torch.Tensor, float]] = [(input_ids, 0.0)]
         completed: List[Tuple[torch.Tensor, float]] = []
+        prompt_len = input_ids.size(1)
 
         for _ in range(self.max_length):
             new_candidates: List[Tuple[torch.Tensor, float]] = []
@@ -29,9 +45,10 @@ class BeamSearch:
                 if isinstance(logits, tuple):
                     logits = logits[0]
                 next_log_probs = torch.log_softmax(logits[:, -1, :], dim=-1)
-                topk_probs, topk_ids = torch.topk(next_log_probs, self.beam_width, dim=-1)
+                width = min(self.beam_width, next_log_probs.size(-1))
+                topk_probs, topk_ids = torch.topk(next_log_probs, width, dim=-1)
 
-                for k in range(self.beam_width):
+                for k in range(width):
                     cand_id = topk_ids[:, k:k+1]
                     cand_score = score + topk_probs[0, k].item()
                     cand_seq = torch.cat([seq, cand_id], dim=-1)
@@ -40,12 +57,12 @@ class BeamSearch:
             if not new_candidates:
                 break
 
-            new_candidates.sort(key=lambda x: x[1] / max(x[0].size(1), 1), reverse=True)
+            new_candidates.sort(key=lambda x: x[1] / max(x[0].size(1) - prompt_len, 1), reverse=True)
             beams = new_candidates[:self.beam_width]
 
-            if len(completed) >= self.beam_width:
+            if self.early_stopping and len(completed) >= self.beam_width:
                 break
 
         all_candidates = completed + beams
-        all_candidates.sort(key=lambda x: x[1] / max(x[0].size(1), 1), reverse=True)
+        all_candidates.sort(key=lambda x: x[1] / max(x[0].size(1) - prompt_len, 1), reverse=True)
         return all_candidates[0][0]

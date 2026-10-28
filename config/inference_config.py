@@ -4,6 +4,7 @@ Inference and text generation configuration.
 
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
+import math
 import json
 
 
@@ -24,9 +25,9 @@ class InferenceConfig:
         """Validate inference parameters."""
         if self.max_new_tokens < 0:
             raise ValueError(f"max_new_tokens must be non-negative, got {self.max_new_tokens}")
-        if self.temperature < 0.0:
+        if not math.isfinite(self.temperature) or self.temperature < 0.0:
             raise ValueError(f"temperature must be non-negative, got {self.temperature}")
-        if not (0.0 <= self.top_p <= 1.0):
+        if not math.isfinite(self.top_p) or not (0.0 <= self.top_p <= 1.0):
             raise ValueError(f"top_p must be in [0.0, 1.0], got {self.top_p}")
         if self.top_k < 0:
             raise ValueError(f"top_k must be non-negative, got {self.top_k}")

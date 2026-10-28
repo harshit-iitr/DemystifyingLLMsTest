@@ -18,6 +18,12 @@ def autoregressive_generate(
     input_ids shape: (batch_size, seq_len)
     """
     generated = input_ids.clone()
+    if generated.dim() != 2:
+        raise ValueError("input_ids must have shape (batch_size, seq_len)")
+    if generated.size(1) == 0:
+        raise ValueError("input_ids must contain at least one token")
+    if max_new_tokens < 0:
+        raise ValueError("max_new_tokens must be non-negative")
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
 
@@ -48,8 +54,7 @@ def autoregressive_generate(
 
             generated = torch.cat([generated, next_token], dim=-1)
 
-            last_id = next_token[0].item() if batch_size == 1 else None
-            if stop_criteria.should_stop(generated.size(1), last_id):
+            if stop_criteria.should_stop(generated.size(1), next_token.squeeze(-1)):
                 break
 
     return generated

@@ -1,5 +1,6 @@
 """Repetition penalty."""
 import torch
+import math
 from typing import List, Union
 
 
@@ -14,7 +15,7 @@ def apply_repetition_penalty(
     """
     if penalty == 1.0:
         return logits
-    if penalty <= 0.0:
+    if not math.isfinite(penalty) or penalty <= 0.0:
         raise ValueError("penalty must be positive")
 
     logits = logits.clone()
