@@ -5,6 +5,8 @@ Status: Clean — Red Herring (Complex padding, mask construction, and dynamic m
 """
 
 import time
+import math
+import threading
 from typing import List, Tuple, Dict, Any, Optional
 import torch
 
@@ -107,35 +109,41 @@ class DynamicBatcher:
         max_wait_ms: float = 20.0,
         pad_id: int = 0
     ):
+        if max_batch_size <= 0:
+            raise ValueError("max_batch_size must be positive")
+        if not math.isfinite(max_wait_ms) or max_wait_ms < 0:
+            raise ValueError("max_wait_ms must be finite and non-negative")
         self.max_batch_size = max_batch_size
         self.max_wait_ms = max_wait_ms
         self.processor = BatchProcessor(pad_id=pad_id, default_side="left")
         self._queue: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
 
     def enqueue(self, request_id: str, token_ids: List[int]) -> None:
         """Enqueue an incoming request."""
-        self._queue.append({
-            "id": request_id,
-            "tokens": token_ids,
-            "enqueued_at": time.perf_counter()
-        })
+        with self._lock:
+            self._queue.append({
+                "id": request_id,
+                "tokens": token_ids,
+                "enqueued_at": time.perf_counter()
+            })
 
     def ready_batch(self) -> Optional[Tuple[List[str], torch.Tensor, torch.Tensor]]:
         """
         Inspect the queue and extract a batch if either max_batch_size is reached
         or the oldest request has waited longer than max_wait_ms.
         """
-        if not self._queue:
-            return None
+        with self._lock:
+            if not self._queue:
+                return None
 
-        oldest_wait = (time.perf_counter() - self._queue[0]["enqueued_at"]) * 1000.0
-        if len(self._queue) >= self.max_batch_size or oldest_wait >= self.max_wait_ms:
+            oldest_wait = (time.perf_counter() - self._queue[0]["enqueued_at"]) * 1000.0
+            if len(self._queue) < self.max_batch_size and oldest_wait < self.max_wait_ms:
+                return None
             batch_items = self._queue[: self.max_batch_size]
-            self._queue = self._queue[self.max_batch_size :]
+            del self._queue[: self.max_batch_size]
 
-            ids = [item["id"] for item in batch_items]
-            sequences = [item["tokens"] for item in batch_items]
-            padded, mask = self.processor.pad_sequences(sequences)
-            return ids, padded, mask
-
-        return None
+        ids = [item["id"] for item in batch_items]
+        sequences = [item["tokens"] for item in batch_items]
+        padded, mask = self.processor.pad_sequences(sequences)
+        return ids, padded, mask

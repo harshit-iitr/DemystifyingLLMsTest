@@ -55,6 +55,10 @@ def create_handler_class(router: RouteHandler):
             else:
                 body = {}
 
+            if not isinstance(body, dict):
+                self._send_json_response(400, {"error": "JSON payload must be an object"})
+                return
+
             status, response = router.dispatch("POST", self.path, body)
             self._send_json_response(status, response)
 
@@ -84,7 +88,7 @@ class TransformerServer:
     def start(self, background: bool = False) -> None:
         """Start the HTTP server on configured host and port."""
         handler_cls = create_handler_class(self.route_handler)
-        self._server = http.server.HTTPServer((self.config.host, self.config.port), handler_cls)
+        self._server = http.server.ThreadingHTTPServer((self.config.host, self.config.port), handler_cls)
         logger.info(f"Starting stdlib HTTP server at http://{self.config.host}:{self.config.port}")
 
         if background:

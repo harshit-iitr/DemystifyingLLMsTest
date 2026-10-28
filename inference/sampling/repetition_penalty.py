@@ -16,12 +16,30 @@ def apply_repetition_penalty(
         return logits
 
     logits = logits.clone()
-    if isinstance(generated_tokens, torch.Tensor):
-        unique_tokens = torch.unique(generated_tokens).tolist()
+    if logits.dim() == 1:
+        histories = [generated_tokens]
+        rows = logits.unsqueeze(0)
+        squeeze = True
     else:
-        unique_tokens = list(set(generated_tokens))
+        rows = logits
+        squeeze = False
+        if isinstance(generated_tokens, torch.Tensor):
+            histories = generated_tokens.tolist()
+        else:
+            histories = generated_tokens
+        if not histories or not isinstance(histories[0], (list, tuple, torch.Tensor)):
+            histories = [histories] * rows.size(0)
+        if len(histories) != rows.size(0):
+            raise ValueError("generated_tokens must provide one history per logits batch row")
 
-    for token_id in unique_tokens:
-        logits[..., token_id] = logits[..., token_id] - penalty
+    for row, history in zip(rows, histories):
+        if isinstance(history, torch.Tensor):
+            history = history.flatten().tolist()
+        for token_id in set(history):
+            token_id = int(token_id)
+            if token_id < 0 or token_id >= row.numel():
+                raise ValueError(f"generated token ID {token_id} is outside the logits vocabulary")
+            value = row[token_id]
+            row[token_id] = torch.where(value < 0, value * penalty, value / penalty)
 
-    return logits
+    return rows.squeeze(0) if squeeze else rows
