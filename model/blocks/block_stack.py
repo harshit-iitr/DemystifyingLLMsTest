@@ -48,10 +48,25 @@ class BlockStack(nn.Module):
         self.n_layers = n_layers or getattr(cfg, "n_layers", 12)
         self.d_model = d_model or getattr(cfg, "d_model", 768)
 
-        self.blocks = nn.ModuleList([
-            TransformerBlock(config=cfg, layer_idx=i)
-            for i in range(self.n_layers)
-        ])
+        if d_model is not None and d_model != getattr(cfg, "d_model", d_model):
+            from config.model_config import ModelConfig
+            configured_heads = getattr(cfg, "n_heads", 12)
+            # Keep the requested width usable even when it is not divisible by
+            # the default number of heads.
+            n_heads = next(
+                head for head in range(min(configured_heads, d_model), 0, -1)
+                if d_model % head == 0
+            )
+            cfg = ModelConfig(
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=self.n_layers,
+                vocab_size=getattr(cfg, "vocab_size", 50257),
+                max_seq_len=getattr(cfg, "max_seq_len", 1024),
+                ffn_multiplier=getattr(cfg, "ffn_multiplier", 4),
+                dropout=getattr(cfg, "dropout", 0.1),
+            )
+        self.blocks = nn.ModuleList([TransformerBlock(config=cfg, layer_idx=i) for i in range(self.n_layers)])
         self.final_ln = LayerNorm(config=cfg)
 
     def __len__(self) -> int:

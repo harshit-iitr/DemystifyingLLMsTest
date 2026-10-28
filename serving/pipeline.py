@@ -52,19 +52,37 @@ class ServingPipeline:
         else:
             tokens = [ord(c) for c in text]
 
-        input_ids = tokens
+        if not tokens:
+            raise ValueError("text must produce at least one token")
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
         # Step 2: Model Forward Execution
         if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
+            generated = list(tokens)
+            num_new_tokens = (
+                max_new_tokens
+                if max_new_tokens is not None
+                else self.inference_config.max_new_tokens
+            )
+            if hasattr(self.model, "eval"):
+                self.model.eval()
+            with torch.no_grad():
+                for _ in range(num_new_tokens):
+                    model_input = torch.tensor([generated], dtype=torch.long, device=self.device)
+                    output = self.model(model_input)
+                    if isinstance(output, tuple):
+                        output = output[0]
+                    if output.dim() != 3:
+                        raise ValueError("model must return logits shaped (batch, sequence, vocabulary)")
+                    generated.append(int(output[:, -1, :].argmax(dim=-1).item()))
+            output = generated
         else:
             output = None
 
         # Step 3: Decoding
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
+            if isinstance(output, list):
+                return self.tokenizer.decode(output)
             return self.tokenizer.decode(tokens)
 
         return f"{text} [processed]"

@@ -48,11 +48,30 @@ class RequestHandler:
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            return self._completion_response(prompt_tokens, raw_gen, "length")
         else:
             generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
 
-        response_text = generated_tokens
+        completion_tokens = generated_tokens[len(prompt_tokens):]
+        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+            response_text = self.tokenizer.decode(completion_tokens)
+        else:
+            response_text = "".join(chr(token) for token in completion_tokens if 0 <= token <= 0x10FFFF)
+
+        return self._completion_response(prompt_tokens, response_text, "length", generated_tokens)
+
+    def _completion_response(
+        self,
+        prompt_tokens: List[int],
+        response_text: str,
+        finish_reason: str,
+        generated_tokens: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """Format a completion response from decoded text and token accounting."""
+        completion_tokens = (
+            len(generated_tokens) - len(prompt_tokens)
+            if generated_tokens is not None else 0
+        )
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,13 +83,13 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_tokens,
+                "total_tokens": len(prompt_tokens) + completion_tokens
             }
         }
 
