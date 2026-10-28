@@ -44,6 +44,8 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = n_heads if n_heads is not None else getattr(cfg, "n_heads", 12)
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
+        if self.d_model <= 0 or self.n_heads <= 0:
+            raise ValueError(f"d_model and n_heads must be positive, got {self.d_model}, {self.n_heads}")
         if self.d_model % self.n_heads != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"

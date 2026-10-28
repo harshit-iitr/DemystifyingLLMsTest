@@ -42,6 +42,7 @@ class RequestHandler:
         # Generate continuation
         completion_text = ""
         completion_count = 0
+        finish_reason = "length"
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
@@ -50,10 +51,16 @@ class RequestHandler:
             )
             completion_tokens = generated_tokens[len(prompt_tokens):]
             completion_count = len(completion_tokens)
+            stop_token_ids = getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", [])
+            if completion_tokens and completion_tokens[-1] in stop_token_ids:
+                finish_reason = "stop"
             if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
                 completion_text = self.tokenizer.decode(completion_tokens)
             else:
-                completion_text = "".join(chr(token) for token in completion_tokens if 0 <= token <= 0x10FFFF)
+                completion_text = "".join(
+                    chr(token) for token in completion_tokens
+                    if 0 <= token <= 0x10FFFF and not 0xD800 <= token <= 0xDFFF
+                )
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(
                 prompt,
@@ -62,7 +69,13 @@ class RequestHandler:
                 temperature=temperature,
             )
             completion_text = raw_gen[len(prompt):] if raw_gen.startswith(prompt) else raw_gen
-            completion_count = len(self.tokenizer.encode(completion_text)) if self.tokenizer is not None else len(completion_text)
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                try:
+                    completion_count = len(self.tokenizer.encode(completion_text, add_bos=False))
+                except TypeError:
+                    completion_count = len(self.tokenizer.encode(completion_text))
+            else:
+                completion_count = len(completion_text)
         else:
             completion_text = ""
 
@@ -76,7 +89,7 @@ class RequestHandler:
                 {
                     "text": completion_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {

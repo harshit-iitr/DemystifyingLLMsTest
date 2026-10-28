@@ -26,6 +26,7 @@ def autoregressive_generate(
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
 
     kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=generated.device)
 
     was_training = model.training
     model.eval()
@@ -50,10 +51,16 @@ def autoregressive_generate(
                 if next_token.dim() == 1:
                     next_token = next_token.unsqueeze(-1)
 
+                if eos_token_id is not None:
+                    # Keep finished rows at EOS while the remaining batch rows
+                    # continue generating, then stop once every row is done.
+                    next_token = next_token.clone()
+                    next_token[finished] = eos_token_id
+                    finished |= next_token.squeeze(-1).eq(eos_token_id)
+
                 generated = torch.cat([generated, next_token], dim=-1)
 
-                last_id = next_token[0].item() if batch_size == 1 else None
-                if stop_criteria.should_stop(generated.size(1), last_id):
+                if stop_criteria.should_stop(generated.size(1)) or (eos_token_id is not None and finished.all()):
                     break
     finally:
         model.train(was_training)

@@ -32,6 +32,10 @@ class BeamSearch:
         batch_size = input_ids.size(0)
         if batch_size != 1:
             raise ValueError("BeamSearch currently supports batch_size=1")
+        if input_ids.size(1) == 0:
+            raise ValueError("input_ids must contain at least one prompt token")
+        if self.eos_token_ids and input_ids[0, -1].item() in self.eos_token_ids:
+            return input_ids
         beams: List[Tuple[torch.Tensor, float]] = [(input_ids, 0.0)]
         completed: List[Tuple[torch.Tensor, float]] = []
 
@@ -64,6 +68,7 @@ class BeamSearch:
                                 new_candidates.append(candidate)
 
                     if not new_candidates:
+                        beams = []
                         break
 
                     new_candidates.sort(key=lambda x: x[1] / max(x[0].size(1) - input_ids.size(1), 1), reverse=True)

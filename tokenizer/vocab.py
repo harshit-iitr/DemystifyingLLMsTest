@@ -25,14 +25,19 @@ class Vocabulary:
         self.eos_token_id = self.bos_token_id
 
     def add_token(self, token: str, idx: Optional[int] = None) -> int:
+        if not isinstance(token, str):
+            raise TypeError(f"token must be a string, got {type(token).__name__}")
         if token in self._token_to_id:
             return self._token_to_id[token]
         if idx is None:
             idx = 0
             while idx in self._id_to_token:
                 idx += 1
-        elif idx in self._id_to_token and self._id_to_token[idx] != token:
-            raise ValueError(f"Token ID {idx} is already assigned to {self._id_to_token[idx]!r}")
+        else:
+            if not isinstance(idx, int) or idx < 0:
+                raise ValueError(f"token ID must be a non-negative integer, got {idx!r}")
+            if idx in self._id_to_token and self._id_to_token[idx] != token:
+                raise ValueError(f"Token ID {idx} is already assigned to {self._id_to_token[idx]!r}")
         self._token_to_id[token] = idx
         self._id_to_token[idx] = token
         return idx
