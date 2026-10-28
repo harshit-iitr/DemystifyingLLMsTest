@@ -60,16 +60,15 @@ class MultiHeadAttention(nn.Module):
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"
             )
         self.d_head = self.d_model // self.n_heads
+        self.rotary_emb = (
+            RotaryEmbedding(self.d_head, max_seq_len=getattr(cfg, "max_seq_len", 2048))
+            if getattr(cfg, "use_rotary", False)
+            else None
+        )
 
-        # self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        self.use_rotary = bool(getattr(cfg, "use_rotary", False))
-        if self.use_rotary:
-            self.rotary = RotaryEmbedding(self.d_head, getattr(cfg, "max_seq_len", 1024))
 
         self.out_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.attn_dropout = nn.Dropout(p=dropout_p) if dropout_p > 0.0 else None
@@ -107,20 +106,22 @@ class MultiHeadAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
 
-        past_len = kv_cache.get_seq_length(layer_idx) if kv_cache is not None and layer_idx is not None else 0
-        if self.use_rotary:
-            cos, sin = self.rotary(q, past_len + seq_len)
-            q, k = apply_rotary_pos_emb(q, k, cos[:, :, past_len:, :], sin[:, :, past_len:, :])
+        if self.rotary_emb is not None:
+            offset = (
+                kv_cache.get_seq_length(layer_idx)
+                if kv_cache is not None and layer_idx is not None
+                else 0
+            )
+            cos, sin = self.rotary_emb(q, seq_len=seq_len, offset=offset)
+            q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # 3. Update KV cache if provided
         if kv_cache is not None and layer_idx is not None:
             k, v = kv_cache.update(layer_idx, k, v)
 
         # 4. Prepare causal mask if needed
-        if mask is None and use_causal_mask:
-            key_len = past_len + seq_len
-            mask = torch.full((seq_len, key_len), float("-inf"), device=x.device, dtype=x.dtype)
-            mask = torch.triu(mask, diagonal=past_len + 1).unsqueeze(0).unsqueeze(0)
+        if mask is None and use_causal_mask and seq_len > 1:
+            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(
@@ -132,7 +133,6 @@ class MultiHeadAttention(nn.Module):
         )
 
         # 6. Recombine heads
-        # context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
         context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
 
         return self.out_proj(context)

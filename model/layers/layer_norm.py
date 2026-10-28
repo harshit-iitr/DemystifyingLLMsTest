@@ -61,8 +61,6 @@ class LayerNorm(nn.Module):
         Returns:
             Normalized tensor of same shape.
         """
-        # mean = x.mean(dim=-1, keepdim=True)
-        # var = x.var(dim=-1, keepdim=True, unbiased=False)
         mean = x.mean(dim=-1, keepdim=True)
         var = x.var(dim=-1, keepdim=True, unbiased=False)
 

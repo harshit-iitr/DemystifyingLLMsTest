@@ -10,36 +10,31 @@ def apply_repetition_penalty(
 ) -> torch.Tensor:
     """
     Apply repetition penalty to logits for generated tokens.
-    DIVISIVELY (logits / penalty for pos, logits * penalty for neg).
+    Divide positive logits and multiply negative logits for repeated tokens.
     """
+    if penalty <= 0:
+        raise ValueError(f"penalty must be positive, got {penalty}")
     if penalty == 1.0:
         return logits
 
     logits = logits.clone()
+    tokens = torch.as_tensor(generated_tokens, dtype=torch.long, device=logits.device)
+    if tokens.numel() == 0:
+        return logits
     if logits.dim() == 1:
-        histories = [generated_tokens]
-        rows = logits.unsqueeze(0)
-        squeeze = True
+        tokens = tokens.reshape(-1)
+        tokens = tokens[(tokens >= 0) & (tokens < logits.size(-1))].unique()
+        values = logits[tokens]
+        logits[tokens] = torch.where(values < 0, values * penalty, values / penalty)
     else:
-        rows = logits
-        squeeze = False
-        if isinstance(generated_tokens, torch.Tensor):
-            histories = generated_tokens.tolist()
-        else:
-            histories = generated_tokens
-        if not histories or not isinstance(histories[0], (list, tuple, torch.Tensor)):
-            histories = [histories] * rows.size(0)
-        if len(histories) != rows.size(0):
-            raise ValueError("generated_tokens must provide one history per logits batch row")
+        if tokens.dim() == 1:
+            tokens = tokens.unsqueeze(0).expand(logits.size(0), -1)
+        if tokens.size(0) != logits.size(0):
+            raise ValueError("generated_tokens batch dimension must match logits")
+        for row in range(logits.size(0)):
+            row_tokens = tokens[row]
+            row_tokens = row_tokens[(row_tokens >= 0) & (row_tokens < logits.size(-1))].unique()
+            values = logits[row, row_tokens]
+            logits[row, row_tokens] = torch.where(values < 0, values * penalty, values / penalty)
 
-    for row, history in zip(rows, histories):
-        if isinstance(history, torch.Tensor):
-            history = history.flatten().tolist()
-        for token_id in set(history):
-            token_id = int(token_id)
-            if token_id < 0 or token_id >= row.numel():
-                raise ValueError(f"generated token ID {token_id} is outside the logits vocabulary")
-            value = row[token_id]
-            row[token_id] = torch.where(value < 0, value * penalty, value / penalty)
-
-    return rows.squeeze(0) if squeeze else rows
+    return logits

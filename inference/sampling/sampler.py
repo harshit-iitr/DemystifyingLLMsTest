@@ -1,9 +1,7 @@
 """Combined sampler (Clean)."""
 import torch
 import torch.nn.functional as F
-import math
 from typing import Optional, List, Union
-from .temperature import apply_temperature
 from .top_k import apply_top_k
 from .top_p import apply_top_p
 from .repetition_penalty import apply_repetition_penalty
@@ -17,14 +15,6 @@ class Sampler:
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
     ):
-        if not math.isfinite(temperature) or temperature <= 0:
-            raise ValueError("temperature must be finite and positive")
-        if not isinstance(top_k, int) or top_k < 0:
-            raise ValueError("top_k must be a non-negative integer")
-        if not math.isfinite(top_p) or not 0.0 <= top_p <= 1.0:
-            raise ValueError("top_p must be finite and in [0, 1]")
-        if not math.isfinite(repetition_penalty) or repetition_penalty <= 0:
-            raise ValueError("repetition_penalty must be finite and positive")
         self.temperature = temperature
         self.top_k = top_k
         self.top_p = top_p
@@ -47,8 +37,9 @@ class Sampler:
             logits = apply_repetition_penalty(logits, generated_tokens, penalty=self.repetition_penalty)
 
         if self.temperature <= 0:
-            raise ValueError("temperature must be positive")
-        logits = apply_temperature(logits, self.temperature)
+            return torch.argmax(logits, dim=-1)
+        if self.temperature != 1.0:
+            logits = logits / self.temperature
 
         # 2. Top-K
         if self.top_k > 0:
@@ -58,7 +49,6 @@ class Sampler:
         if self.top_p < 1.0:
             logits = apply_top_p(logits, p=self.top_p)
 
-        # 4. Temperature
         probs = F.softmax(logits, dim=-1)
 
         # 5. Multinomial sample

@@ -32,12 +32,19 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        top_p = request_body.get("top_p")
+        top_k = request_body.get("top_k")
+        if not isinstance(max_tokens, int) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
+        if not isinstance(temperature, (int, float)) or temperature < 0:
+            raise ValueError("temperature must be a non-negative number")
 
         # Tokenize prompt
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            prompt_tokens = self.tokenizer.encode(prompt)
-        else:
-            prompt_tokens = [ord(c) for c in prompt]
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise RuntimeError("A tokenizer with encode and decode methods is required")
+        prompt_tokens = self.tokenizer.encode(prompt)
 
         # Generate continuation
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
@@ -45,29 +52,17 @@ class RequestHandler:
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
                 temperature=temperature,
-                top_k=request_body.get("top_k"),
-                top_p=request_body.get("top_p"),
+                top_p=top_p,
+                top_k=top_k,
             )
+            completion_tokens = generated_tokens[len(prompt_tokens):]
+            response_text = self.tokenizer.decode(completion_tokens)
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            generated_tokens = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
+            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
+            response_text = raw_gen[len(prompt):] if raw_gen.startswith(prompt) else raw_gen
+            completion_tokens = self.tokenizer.encode(response_text)
         else:
-            raise RuntimeError("A configured inference engine is required for completions")
-
-        if not isinstance(generated_tokens, str):
-            continuation = generated_tokens[len(prompt_tokens):]
-            if self.tokenizer is None or not hasattr(self.tokenizer, "decode"):
-                raise ValueError("A tokenizer with decode() is required to format generated token IDs")
-            response_text = self.tokenizer.decode(continuation)
-            completion_count = len(continuation)
-        else:
-            response_text = generated_tokens
-            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-                try:
-                    completion_count = len(self.tokenizer.encode(generated_tokens, add_bos=False))
-                except TypeError:
-                    completion_count = len(self.tokenizer.encode(generated_tokens))
-            else:
-                completion_count = len(generated_tokens)
+            raise RuntimeError("No inference engine is available")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -84,8 +79,8 @@ class RequestHandler:
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": completion_count,
-                "total_tokens": len(prompt_tokens) + completion_count
+                "completion_tokens": len(completion_tokens),
+                "total_tokens": len(prompt_tokens) + len(completion_tokens)
             }
         }
 

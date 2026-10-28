@@ -55,10 +55,6 @@ def create_handler_class(router: RouteHandler):
             else:
                 body = {}
 
-            if not isinstance(body, dict):
-                self._send_json_response(400, {"error": "JSON payload must be an object"})
-                return
-
             status, response = router.dispatch("POST", self.path, body)
             self._send_json_response(status, response)
 
@@ -82,7 +78,7 @@ class TransformerServer:
         self.config = config or ServerConfig()
         self.request_handler = RequestHandler(engine=engine, tokenizer=tokenizer)
         self.route_handler = RouteHandler(self.request_handler)
-        self._server: Optional[http.server.HTTPServer] = None
+        self._server: Optional[http.server.ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
     def start(self, background: bool = False) -> None:

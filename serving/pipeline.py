@@ -4,7 +4,6 @@ End-to-end serving pipeline connecting tokenization, model execution, and decodi
 
 from typing import Optional, Any, Union, List
 import torch
-import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
@@ -35,7 +34,7 @@ class ServingPipeline:
         self.inference_config = inference_config or InferenceConfig()
         self.inference_config.validate()
         self.device = torch.device(device) if device else torch.device("cpu")
-        if isinstance(self.model, nn.Module):
+        if self.model is not None and hasattr(self.model, "to"):
             self.model.to(self.device)
 
     def process(self, text: str, max_new_tokens: Optional[int] = None) -> str:
@@ -49,43 +48,30 @@ class ServingPipeline:
         Returns:
             Decoded completion string.
         """
-        if self.model is None or not callable(self.model):
-            raise RuntimeError("ServingPipeline requires a callable model")
+        # Step 1: Tokenization
         if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
-            raise ValueError("ServingPipeline requires a tokenizer with encode() and decode()")
+            raise ValueError("A tokenizer with encode and decode methods is required")
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("A callable model is required")
 
-        tokens = self.tokenizer.encode(text)
-        if not tokens:
-            raise ValueError("Tokenization produced an empty prompt")
-        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        from inference.generation.autoregressive import autoregressive_generate
+        from inference.sampling.sampler import Sampler
 
-        from inference.generation import autoregressive_generate
-        from inference.sampling import Sampler
+        token_ids = self.tokenizer.encode(text)
+        input_ids = torch.tensor([token_ids], dtype=torch.long, device=self.device)
+        count = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
         sampler = Sampler(
             temperature=self.inference_config.temperature,
             top_k=self.inference_config.top_k,
             top_p=self.inference_config.top_p,
             repetition_penalty=self.inference_config.repetition_penalty,
         )
-        sampling_history = list(tokens)
-
-        def sample_next(logits: torch.Tensor) -> torch.Tensor:
-            sampled = sampler.sample(logits, generated_tokens=sampling_history)
-            sampling_history.append(int(sampled.reshape(-1)[0].item()))
-            return sampled
-
-        was_training = self.model.training if isinstance(self.model, nn.Module) else None
-        try:
-            output_ids = autoregressive_generate(
-                self.model,
-                input_ids,
-                max_new_tokens=(max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens),
-                eos_token_id=self.inference_config.stop_token_ids,
-                sampler_fn=sample_next,
-                use_cache=False,
-            )
-        finally:
-            if was_training:
-                self.model.train()
-        continuation = output_ids[0, len(tokens):].tolist()
-        return self.tokenizer.decode(continuation)
+        generated = autoregressive_generate(
+            self.model,
+            input_ids,
+            max_new_tokens=count,
+            eos_token_id=self.inference_config.stop_token_ids or None,
+            sampler_fn=sampler.sample,
+            use_cache=self.inference_config.use_kv_cache,
+        )
+        return self.tokenizer.decode(generated[0].tolist())

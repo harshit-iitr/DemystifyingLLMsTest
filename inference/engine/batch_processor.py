@@ -5,8 +5,6 @@ Status: Clean — Red Herring (Complex padding, mask construction, and dynamic m
 """
 
 import time
-import math
-import threading
 from typing import List, Tuple, Dict, Any, Optional
 import torch
 
@@ -22,6 +20,8 @@ class BatchProcessor:
     """
 
     def __init__(self, pad_id: int = 0, default_side: str = "left"):
+        if default_side not in ("left", "right"):
+            raise ValueError("default_side must be 'left' or 'right'")
         self.pad_id = pad_id
         self.default_side = default_side
 
@@ -43,11 +43,13 @@ class BatchProcessor:
         Returns:
             Tuple of (padded_input_ids, attention_mask)
         """
+        padding_side = self.default_side if side is None else side
+        if padding_side not in ("left", "right"):
+            raise ValueError(f"Invalid padding side '{padding_side}', must be 'left' or 'right'")
         if not token_lists:
             empty = torch.empty((0, 0), dtype=torch.long, device=device)
             return empty, empty
 
-        padding_side = side or self.default_side
         batch_size = len(token_lists)
         max_len = max(len(s) for s in token_lists)
 
@@ -65,8 +67,6 @@ class BatchProcessor:
             elif padding_side == "right":
                 padded_tensor[i, :seq_len] = seq_t
                 attention_mask[i, :seq_len] = 1
-            else:
-                raise ValueError(f"Invalid padding side '{padding_side}', must be 'left' or 'right'")
 
         return padded_tensor, attention_mask
 
@@ -94,6 +94,8 @@ class BatchProcessor:
         chunk_size: int
     ) -> List[torch.Tensor]:
         """Split a large batch tensor into smaller micro-batch chunks."""
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
         return list(torch.split(tensor, chunk_size, dim=0))
 
 
@@ -111,39 +113,37 @@ class DynamicBatcher:
     ):
         if max_batch_size <= 0:
             raise ValueError("max_batch_size must be positive")
-        if not math.isfinite(max_wait_ms) or max_wait_ms < 0:
-            raise ValueError("max_wait_ms must be finite and non-negative")
+        if max_wait_ms < 0:
+            raise ValueError("max_wait_ms must be non-negative")
         self.max_batch_size = max_batch_size
         self.max_wait_ms = max_wait_ms
         self.processor = BatchProcessor(pad_id=pad_id, default_side="left")
         self._queue: List[Dict[str, Any]] = []
-        self._lock = threading.Lock()
 
     def enqueue(self, request_id: str, token_ids: List[int]) -> None:
         """Enqueue an incoming request."""
-        with self._lock:
-            self._queue.append({
-                "id": request_id,
-                "tokens": token_ids,
-                "enqueued_at": time.perf_counter()
-            })
+        self._queue.append({
+            "id": request_id,
+            "tokens": token_ids,
+            "enqueued_at": time.perf_counter()
+        })
 
     def ready_batch(self) -> Optional[Tuple[List[str], torch.Tensor, torch.Tensor]]:
         """
         Inspect the queue and extract a batch if either max_batch_size is reached
         or the oldest request has waited longer than max_wait_ms.
         """
-        with self._lock:
-            if not self._queue:
-                return None
+        if not self._queue:
+            return None
 
-            oldest_wait = (time.perf_counter() - self._queue[0]["enqueued_at"]) * 1000.0
-            if len(self._queue) < self.max_batch_size and oldest_wait < self.max_wait_ms:
-                return None
+        oldest_wait = (time.perf_counter() - self._queue[0]["enqueued_at"]) * 1000.0
+        if len(self._queue) >= self.max_batch_size or oldest_wait >= self.max_wait_ms:
             batch_items = self._queue[: self.max_batch_size]
-            del self._queue[: self.max_batch_size]
+            self._queue = self._queue[self.max_batch_size :]
 
-        ids = [item["id"] for item in batch_items]
-        sequences = [item["tokens"] for item in batch_items]
-        padded, mask = self.processor.pad_sequences(sequences)
-        return ids, padded, mask
+            ids = [item["id"] for item in batch_items]
+            sequences = [item["tokens"] for item in batch_items]
+            padded, mask = self.processor.pad_sequences(sequences)
+            return ids, padded, mask
+
+        return None

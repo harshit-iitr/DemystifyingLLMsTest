@@ -7,10 +7,7 @@ class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
         self.vocab = vocab or Vocabulary()
         self.merges: List[Tuple[str, str]] = merges or []
-
-    @property
-    def vocab_size(self) -> int:
-        return len(self.vocab)
+        self.vocab_size = 50257
 
     def _get_stats(self, pieces: List[str]) -> Dict[Tuple[str, str], int]:
         pairs: Dict[Tuple[str, str], int] = {}
@@ -38,21 +35,25 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ranks = {pair: rank for rank, pair in enumerate(self.merges)}
+        merge_ranks = {pair: rank for rank, pair in enumerate(self.merges)}
         while len(pieces) > 1:
-            candidates = [(ranks[pair], pair) for pair in self._get_stats(pieces) if pair in ranks]
-            if not candidates:
+            pairs = self._get_stats(pieces)
+            candidate = min(
+                (pair for pair in pairs if pair in merge_ranks),
+                key=lambda pair: merge_ranks[pair],
+                default=None,
+            )
+            if candidate is None:
                 break
-            _, pair = min(candidates)
-            pieces = self._merge_word(pieces, pair)
+            pieces = self._merge_word(pieces, candidate)
 
         return pieces
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        import re
-        for piece in re.findall(r"\s+|\S+", text):
-            tokens.extend([piece] if piece.isspace() else self.bpe(piece))
+        for word in text.split(" "):
+            if word:
+                tokens.extend(self.bpe(word))
         return tokens
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:

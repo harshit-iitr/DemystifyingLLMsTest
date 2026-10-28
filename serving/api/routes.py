@@ -40,8 +40,6 @@ class RouteHandler:
             return 200, self.handler.handle_models()
 
         if method == "POST" and clean_path in ("/v1/completions", "/completions"):
-            if self.handler.engine is None:
-                return 503, {"error": "Inference engine is unavailable"}
             request_body = body or {}
             response = self.handler.handle_completion(request_body)
             return 200, response
