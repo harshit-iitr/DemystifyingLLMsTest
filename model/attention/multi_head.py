@@ -10,8 +10,7 @@ import torch.nn as nn
 
 from .scaled_dot_product import scaled_dot_product_attention
 from .causal_mask import create_causal_mask
-
-
+from .rotary_pe import RotaryEmbedding, apply_rotary_pos_emb
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
     if explicit_config is not None:
         return explicit_config
