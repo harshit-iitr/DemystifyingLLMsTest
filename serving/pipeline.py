@@ -47,24 +47,25 @@ class ServingPipeline:
             Decoded completion string.
         """
         # Step 1: Tokenization
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            tokens = self.tokenizer.encode(text)
-        else:
-            tokens = [ord(c) for c in text]
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise ValueError("A tokenizer with encode and decode methods is required")
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("A callable model is required to process a request")
+        if hasattr(self.model, "to"):
+            self.model.to(self.device)
+        if hasattr(self.model, "eval"):
+            self.model.eval()
 
-        input_ids = tokens
+        token_ids = self.tokenizer.encode(text)
+        if not token_ids:
+            raise ValueError("The tokenizer produced an empty prompt")
+        input_ids = torch.tensor([token_ids], dtype=torch.long, device=self.device)
 
-        # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
-        else:
-            output = None
-
-        # Step 3: Decoding
-        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
-
-        return f"{text} [processed]"
+        from inference.generation import autoregressive_generate
+        generated = autoregressive_generate(
+            self.model,
+            input_ids,
+            max_new_tokens=(max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens),
+            eos_token_id=(self.inference_config.stop_token_ids[0] if self.inference_config.stop_token_ids else None),
+        )
+        return self.tokenizer.decode(generated[0].tolist())

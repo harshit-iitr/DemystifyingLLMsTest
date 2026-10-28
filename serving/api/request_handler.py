@@ -30,8 +30,12 @@ class RequestHandler:
             Formatted response dictionary.
         """
         prompt = request_body.get("prompt", "")
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        if not isinstance(max_tokens, int) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
 
         # Tokenize prompt
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
@@ -46,13 +50,22 @@ class RequestHandler:
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
+            response_text = (
+                self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+                if self.tokenizer is not None and hasattr(self.tokenizer, "decode")
+                else " ".join(map(str, generated_tokens[len(prompt_tokens):]))
+            )
+            completion_count = max(0, len(generated_tokens) - len(prompt_tokens))
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            response_text = self.engine.generate(
+                prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens,
+                temperature=temperature,
+            )
+            if response_text.startswith(prompt):
+                response_text = response_text[len(prompt):]
+            completion_count = max(0, len(self.tokenizer.encode(response_text)) - len(prompt_tokens)) if self.tokenizer is not None else 0
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            raise RuntimeError("No inference engine is configured")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -69,8 +82,8 @@ class RequestHandler:
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_count,
+                "total_tokens": len(prompt_tokens) + completion_count
             }
         }
 

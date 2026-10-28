@@ -24,11 +24,13 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        cache = kwargs.get("kv_cache")
+        offset = cache.get_seq_length() if cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
         h = self.blocks(h, **kwargs)
         logits = self.lm_head(h)
         return logits
@@ -53,6 +55,7 @@ class InferenceEngine:
             self.model_config = ModelConfig(d_model=768, vocab_size=50257)
 
         self.inference_config = inference_config or InferenceConfig()
+        self.inference_config.validate()
         self.device = torch.device(device) if device else torch.device("cpu")
 
         if model is not None:
@@ -68,8 +71,11 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None:
+            if hasattr(self.model, "to"):
+                self.model.to(self.device)
+            if hasattr(self.model, "eval"):
+                self.model.eval()
 
     def generate_tokens(
         self,
@@ -90,28 +96,38 @@ class InferenceEngine:
 
         temp = temperature if temperature is not None else self.inference_config.temperature
         tokens = list(prompt_tokens)
+        if not tokens:
+            raise ValueError("prompt_tokens must contain at least one token")
 
         # Autoregressive generation loop
         with torch.no_grad():
             for _ in range(max_tokens):
                 input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+                if self.model is None or not callable(self.model):
+                    raise RuntimeError("No callable model is available for token generation")
+                logits = self.model(input_tensor)
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                next_token_logits = logits[:, -1, :]
 
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                if temp > 0:
+                    from inference.sampling import apply_top_k, apply_top_p, apply_repetition_penalty
+                    next_token_logits = next_token_logits / temp
+                    effective_top_k = top_k if top_k is not None else self.inference_config.top_k
+                    effective_top_p = top_p if top_p is not None else self.inference_config.top_p
+                    if self.inference_config.repetition_penalty != 1.0:
+                        next_token_logits = apply_repetition_penalty(
+                            next_token_logits, tokens, self.inference_config.repetition_penalty
+                        )
+                    if effective_top_k > 0:
+                        next_token_logits = apply_top_k(next_token_logits, effective_top_k)
+                    if effective_top_p < 1.0:
+                        next_token_logits = apply_top_p(next_token_logits, effective_top_p)
+                    probs = torch.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1).item()
                 else:
-                    self._failed = True
-                    next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    next_token = torch.argmax(next_token_logits, dim=-1).item()
 
                 tokens.append(int(next_token))
 
@@ -131,16 +147,10 @@ class InferenceEngine:
         End-to-end string-to-string text generation.
         """
         self._prepare_model()
-        self._failed = False
-
         # Tokenize prompt
-        if tokenizer is not None and hasattr(tokenizer, "encode"):
-            try:
-                prompt_ids = tokenizer.encode(prompt)
-            except Exception:
-                prompt_ids = [ord(c) for c in prompt]
-        else:
-            prompt_ids = [ord(c) for c in prompt]
+        if tokenizer is None or not hasattr(tokenizer, "encode"):
+            raise ValueError("A tokenizer with an encode method is required")
+        prompt_ids = tokenizer.encode(prompt)
 
         # Generate tokens
         output_ids = self.generate_tokens(
@@ -150,12 +160,6 @@ class InferenceEngine:
         )
 
         # Decode generated tokens
-        if not getattr(self, "_failed", False) and tokenizer is not None and hasattr(tokenizer, "decode"):
-            try:
-                return tokenizer.decode(output_ids)
-            except Exception:
-                pass
-
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation
+        if not hasattr(tokenizer, "decode"):
+            raise ValueError("A tokenizer with a decode method is required")
+        return tokenizer.decode(output_ids)
