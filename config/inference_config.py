@@ -6,24 +6,26 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 import json
 
+from .constants import EOS_TOKEN_ID
+
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 100
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
     top_p: float = 0.9
     repetition_penalty: float = 1.1
-    stop_token_ids: List[int] = field(default_factory=list)
+    stop_token_ids: List[int] = field(default_factory=lambda: [EOS_TOKEN_ID])
     early_stopping: bool = True
     beam_width: int = 1         # 1 indicates greedy / stochastic sampling (non-beam)
     seed: Optional[int] = 42
 
     def validate(self) -> None:
         """Validate inference parameters."""
-        if self.max_new_tokens < 0:
-            raise ValueError(f"max_new_tokens must be non-negative, got {self.max_new_tokens}")
+        if self.max_new_tokens <= 0:
+            raise ValueError(f"max_new_tokens must be positive, got {self.max_new_tokens}")
         if self.temperature < 0.0:
             raise ValueError(f"temperature must be non-negative, got {self.temperature}")
         if not (0.0 <= self.top_p <= 1.0):

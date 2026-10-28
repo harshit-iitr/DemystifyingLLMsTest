@@ -9,6 +9,8 @@ import torch.nn as nn
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from utils.logging_utils import get_logger
+from inference.sampling.top_k import apply_top_k
+from inference.sampling.top_p import apply_top_p
 
 logger = get_logger("inference_engine")
 
@@ -24,12 +26,17 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        self.num_layers = config.n_layers
 
-    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
-        h = self.blocks(h, **kwargs)
+        if getattr(config, "tie_weights", False):
+            self.lm_head.tie_weights(self.embeddings.token_embedding.embedding.weight)
+
+    def forward(self, input_ids: torch.Tensor, kv_cache: Optional[Any] = None, **kwargs) -> torch.Tensor:
+        offset = kv_cache.get_seq_length() if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
+        h = self.blocks(h, kv_cache=kv_cache, **kwargs)
         logits = self.lm_head(h)
         return logits
 
@@ -55,6 +62,9 @@ class InferenceEngine:
         self.inference_config = inference_config or InferenceConfig()
         self.device = torch.device(device) if device else torch.device("cpu")
 
+        if self.inference_config.seed is not None:
+            torch.manual_seed(self.inference_config.seed)
+
         if model is not None:
             self.model = model
         else:
@@ -64,12 +74,16 @@ class InferenceEngine:
                 logger.debug(f"Could not build FullTransformerModel: {e}")
                 self.model = None
 
+        if isinstance(self.model, nn.Module):
+            self.model = self.model.to(self.device)
+        self._prepare_model()
+
     def _prepare_model(self) -> None:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None and hasattr(self.model, "eval"):
+            self.model.eval()
 
     def generate_tokens(
         self,
@@ -88,30 +102,40 @@ class InferenceEngine:
         if max_tokens <= 0:
             return list(prompt_tokens)
 
-        temp = temperature if temperature is not None else self.inference_config.temperature
-        tokens = list(prompt_tokens)
+        if self.inference_config.seed is not None:
+            torch.manual_seed(self.inference_config.seed)
 
-        # Autoregressive generation loop
+        temp = temperature if temperature is not None else self.inference_config.temperature
+        top_k = top_k if top_k is not None else self.inference_config.top_k
+        top_p = top_p if top_p is not None else self.inference_config.top_p
+        tokens = list(prompt_tokens)
+        model_cfg = getattr(self.model, "config", None) or self.model_config
+        max_context = getattr(model_cfg, "max_seq_len", None)
+
         with torch.no_grad():
             for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+                context = tokens[-max_context:] if max_context else tokens
+                input_tensor = torch.tensor([context], dtype=torch.long, device=self.device)
 
                 if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+                    logits = self.model(input_tensor)
+                    if isinstance(logits, tuple):
+                        logits = logits[0]
+                    next_token_logits = logits[:, -1, :]
 
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    if temp > 0:
+                        next_token_logits = next_token_logits / temp
+                        if top_k is not None:
+                            next_token_logits = apply_top_k(next_token_logits, k=top_k)
+                        if top_p is not None:
+                            next_token_logits = apply_top_p(next_token_logits, p=top_p)
+                        probs = torch.softmax(next_token_logits, dim=-1)
+                        next_token = torch.multinomial(probs, num_samples=1).item()
+                    else:
+                        next_token = torch.argmax(next_token_logits, dim=-1).item()
                 else:
                     self._failed = True
-                    next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    break
 
                 tokens.append(int(next_token))
 
@@ -150,12 +174,7 @@ class InferenceEngine:
         )
 
         # Decode generated tokens
-        if not getattr(self, "_failed", False) and tokenizer is not None and hasattr(tokenizer, "decode"):
-            try:
-                return tokenizer.decode(output_ids)
-            except Exception:
-                pass
+        if tokenizer is not None and hasattr(tokenizer, "decode"):
+            return tokenizer.decode(output_ids)
 
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation
+        return "".join(chr(i) for i in output_ids if 0 <= i < 0x110000)

@@ -48,11 +48,17 @@ class RequestHandler:
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                generated_tokens = self.tokenizer.encode(raw_gen)
+            else:
+                generated_tokens = [ord(c) for c in raw_gen]
         else:
             generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
 
-        response_text = generated_tokens
+        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+            response_text = self.tokenizer.decode(generated_tokens)
+        else:
+            response_text = "".join(chr(i) for i in generated_tokens if 0 <= i < 0x110000)
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",

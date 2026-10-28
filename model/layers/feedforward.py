@@ -49,12 +49,12 @@ class FeedForward(nn.Module):
         if d_ffn is not None:
             self.d_ffn = d_ffn
         else:
-            self.d_ffn = self.d_model * 2
+            self.d_ffn = self.d_model * getattr(cfg, "ffn_multiplier", 4)
 
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
         self.linear1 = nn.Linear(self.d_model, self.d_ffn, bias=bias)
-        self.activation = nn.GELU(approximate="tanh")
+        self.activation = nn.GELU()
         self.linear2 = nn.Linear(self.d_ffn, self.d_model, bias=bias)
         self.dropout = nn.Dropout(p=dropout_p)
 
