@@ -2,9 +2,8 @@
 End-to-end serving pipeline connecting tokenization, model execution, and decoding.
 """
 
-from typing import Optional, Any, Union, List
+from typing import Optional, Any, Union
 import torch
-import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
@@ -46,25 +45,44 @@ class ServingPipeline:
         Returns:
             Decoded completion string.
         """
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise ValueError("ServingPipeline requires a tokenizer with encode and decode methods")
+
         # Step 1: Tokenization
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
             tokens = self.tokenizer.encode(text)
-        else:
-            tokens = [ord(c) for c in text]
-
-        input_ids = tokens
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
         # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
-        else:
-            output = None
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("ServingPipeline has no callable model")
+        if hasattr(self.model, "to"):
+            self.model.to(self.device)
+        if hasattr(self.model, "eval"):
+            self.model.eval()
 
-        # Step 3: Decoding
-        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
+        from inference.generation.autoregressive import autoregressive_generate
+        from inference.sampling.sampler import Sampler
 
-        return f"{text} [processed]"
+        temperature = self.inference_config.temperature
+        sampler = Sampler(
+            temperature=temperature if temperature > 0 else 1.0,
+            top_k=self.inference_config.top_k,
+            top_p=self.inference_config.top_p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
+        sampler_fn = sampler.sample if temperature > 0 else None
+        token_limit = (
+            max_new_tokens if max_new_tokens is not None
+            else self.inference_config.max_new_tokens
+        )
+        output_ids = autoregressive_generate(
+            self.model,
+            input_ids,
+            max_new_tokens=token_limit,
+            eos_token_id=self.inference_config.stop_token_ids[0]
+            if self.inference_config.stop_token_ids else None,
+            sampler_fn=sampler_fn,
+            use_cache=self.inference_config.use_kv_cache,
+        )
+        return self.tokenizer.decode(output_ids[0].tolist())

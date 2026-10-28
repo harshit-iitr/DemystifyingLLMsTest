@@ -10,7 +10,7 @@ def apply_repetition_penalty(
 ) -> torch.Tensor:
     """
     Apply repetition penalty to logits for generated tokens.
-    DIVISIVELY (logits / penalty for pos, logits * penalty for neg).
+    Scale positive logits down and negative logits further from zero.
     """
     if penalty == 1.0:
         return logits
@@ -22,6 +22,13 @@ def apply_repetition_penalty(
         unique_tokens = list(set(generated_tokens))
 
     for token_id in unique_tokens:
-        logits[..., token_id] = logits[..., token_id] - penalty
+        if token_id < 0 or token_id >= logits.size(-1):
+            continue
+        token_logits = logits[..., token_id]
+        logits[..., token_id] = torch.where(
+            token_logits > 0,
+            token_logits / penalty,
+            token_logits * penalty,
+        )
 
     return logits

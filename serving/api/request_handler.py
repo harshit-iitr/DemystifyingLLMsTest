@@ -46,13 +46,17 @@ class RequestHandler:
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
+            completion_tokens = generated_tokens[len(prompt_tokens):]
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                response_text = self.tokenizer.decode(completion_tokens)
+            else:
+                response_text = " ".join(map(str, completion_tokens))
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            response_text = raw_gen[len(prompt):] if raw_gen.startswith(prompt) else raw_gen
+            generated_tokens = prompt_tokens
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            raise RuntimeError("No inference engine is available to handle completion requests")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,7 +68,13 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": (
+                        "stop" if self.engine is not None
+                        and any(t in generated_tokens[len(prompt_tokens):] for t in getattr(
+                            getattr(self.engine, "inference_config", None), "stop_token_ids", []
+                        ))
+                        else "length"
+                    )
                 }
             ],
             "usage": {
