@@ -6,12 +6,13 @@ def apply_top_k(logits: torch.Tensor, k: int) -> torch.Tensor:
     """
     Mask logits outside top-k.
     """
-    if k <= 0 or k >= logits.size(-1):
+    if k < 0:
+        raise ValueError("k must be non-negative")
+    if k == 0 or k >= logits.size(-1):
         return logits
 
-    val, idx = torch.topk(logits, k, largest=False, dim=-1)
-    # Mask out everything except the selected ones (which are lowest)
-    threshold = val[..., -1, None]
+    _, idx = torch.topk(logits, k, largest=True, dim=-1)
     filtered_logits = logits.clone()
-    filtered_logits[filtered_logits > threshold] = float("-inf")
+    filtered_logits.fill_(float("-inf"))
+    filtered_logits.scatter_(-1, idx, logits.gather(-1, idx))
     return filtered_logits

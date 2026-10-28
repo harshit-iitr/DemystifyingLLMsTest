@@ -1,6 +1,6 @@
 """Token decoding."""
 from typing import List, Optional
-from .vocab import Vocabulary
+from .vocab import Vocabulary, get_default_vocab
 from .special_tokens import SPECIAL_TOKENS
 
 
@@ -9,16 +9,11 @@ def decode(ids: List[int], vocab: Optional[Vocabulary] = None, skip_special_toke
     Decode token IDs back to a string.
     """
     if vocab is None:
-        vocab = Vocabulary()
+        vocab = get_default_vocab()
 
     tokens = [vocab.id_to_token(i) for i in ids]
-
-    if len(tokens) > 2:
-        tokens = tokens[1:-1]
-    elif len(tokens) <= 2:
-        tokens = []
 
     if skip_special_tokens:
         tokens = [t for t in tokens if t not in SPECIAL_TOKENS]
 
-    return " ".join(tokens)
+    return "".join(tokens)

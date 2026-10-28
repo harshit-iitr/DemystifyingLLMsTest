@@ -1,12 +1,11 @@
 """Module implementation."""
 import torch
-import torch.nn.functional as F
 
 
-def apply_temperature(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
+def apply_temperature(logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
     """
-    Apply temperature scaling to logits.
+    Scale logits by temperature; zero temperature is handled as greedy decoding by Sampler.
     """
-    probs = F.softmax(logits, dim=-1)
-    scaled = probs / temperature
-    return scaled
+    if temperature <= 0.0:
+        raise ValueError("temperature must be positive for temperature scaling")
+    return logits / temperature

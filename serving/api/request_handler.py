@@ -5,6 +5,7 @@ HTTP API request parsing, validation, and execution handler.
 import time
 import uuid
 from typing import Dict, Any, Optional, List
+from config.constants import EOS_TOKEN_ID
 from utils.logging_utils import get_logger
 
 logger = get_logger("request_handler")
@@ -29,30 +30,62 @@ class RequestHandler:
         Returns:
             Formatted response dictionary.
         """
+        if not isinstance(request_body, dict):
+            raise ValueError("request body must be a JSON object")
         prompt = request_body.get("prompt", "")
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
+        if not isinstance(temperature, (int, float)) or temperature < 0.0:
+            raise ValueError("temperature must be non-negative")
 
         # Tokenize prompt
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            prompt_tokens = self.tokenizer.encode(prompt)
-        else:
-            prompt_tokens = [ord(c) for c in prompt]
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode"):
+            raise ValueError("A tokenizer with an encode method is required")
+        prompt_tokens = self.tokenizer.encode(prompt)
 
         # Generate continuation
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                top_k=request_body.get("top_k"),
+                top_p=request_body.get("top_p"),
+                repetition_penalty=request_body.get("repetition_penalty"),
             )
+            if not hasattr(self.tokenizer, "decode"):
+                raise ValueError("A tokenizer with a decode method is required")
+            completion_ids = generated_tokens[len(prompt_tokens):]
+            response_text = self.tokenizer.decode(completion_ids)
+            completion_count = len(completion_ids)
+            configured_stops = getattr(
+                getattr(self.engine, "inference_config", None),
+                "stop_token_ids",
+                [EOS_TOKEN_ID],
+            )
+            stop_ids = configured_stops or [EOS_TOKEN_ID]
+            finish_reason = "stop" if any(token in stop_ids for token in completion_ids) else "length"
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            full_text = self.engine.generate(
+                prompt,
+                tokenizer=self.tokenizer,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_k=request_body.get("top_k"),
+                top_p=request_body.get("top_p"),
+                repetition_penalty=request_body.get("repetition_penalty"),
+            )
+            response_text = full_text[len(prompt):] if full_text.startswith(prompt) else full_text
+            completion_count = max(
+                0, len(self.tokenizer.encode(full_text)) - len(prompt_tokens)
+            )
+            finish_reason = "length"
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            raise RuntimeError("No inference engine is available")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,13 +97,13 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_count,
+                "total_tokens": len(prompt_tokens) + completion_count
             }
         }
 
@@ -91,7 +124,7 @@ class RequestHandler:
                     "id": "broken-transformer",
                     "object": "model",
                     "owned_by": "openai-dsg-iitr",
-                    "ready": True
+                    "ready": self.engine is not None
                 }
             ]
         }

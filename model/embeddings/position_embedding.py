@@ -25,8 +25,8 @@ class SinusoidalPositionEmbedding(nn.Module):
             torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
         )
 
-        pe[:, 0::2] = torch.cos(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[: pe[:, 1::2].shape[1]])
 
         # Shape: (1, max_seq_len, d_model) for automatic batch broadcasting
         self.register_buffer("pe", pe.unsqueeze(0))
@@ -48,7 +48,7 @@ class SinusoidalPositionEmbedding(nn.Module):
         Returns:
             Tensor of shape (1, seq_len, d_model).
         """
-        if offset + seq_len > self.max_seq_len:
+        if seq_len < 0 or offset < 0 or offset + seq_len > self.max_seq_len:
             raise ValueError(
                 f"Requested position index {offset + seq_len} exceeds max_seq_len {self.max_seq_len}"
             )
@@ -77,6 +77,10 @@ class LearnedPositionEmbedding(nn.Module):
         offset: int = 0,
         device: Optional[torch.device] = None
     ) -> torch.Tensor:
+        if seq_len < 0 or offset < 0 or offset + seq_len > self.max_seq_len:
+            raise ValueError(
+                f"Position range [{offset}, {offset + seq_len}) exceeds max_seq_len {self.max_seq_len}"
+            )
         positions = torch.arange(offset, offset + seq_len, dtype=torch.long)
         if device is not None:
             positions = positions.to(device)

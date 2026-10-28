@@ -4,8 +4,8 @@ Block stack module combining N transformer blocks.
 Status: Clean
 """
 
-import inspect
 from typing import Optional, Any
+import copy
 import torch
 import torch.nn as nn
 
@@ -17,18 +17,8 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
     if explicit_config is not None:
         return explicit_config
 
-    for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
-
     from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+    return ModelConfig()
 
 
 class BlockStack(nn.Module):
@@ -45,8 +35,18 @@ class BlockStack(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.n_layers = n_layers or getattr(cfg, "n_layers", 12)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
+        self.n_layers = n_layers if n_layers is not None else getattr(cfg, "n_layers", 12)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
+        if self.n_layers <= 0 or self.d_model <= 0:
+            raise ValueError("n_layers and d_model must be positive")
+        if self.d_model != getattr(cfg, "d_model", self.d_model):
+            n_heads = getattr(cfg, "n_heads", 12)
+            if n_heads <= 0 or self.d_model % n_heads != 0:
+                raise ValueError("d_model must be divisible by a positive n_heads")
+            cfg = copy.copy(cfg)
+            cfg.d_model = self.d_model
+            cfg.d_head = self.d_model // n_heads
+            cfg.d_ffn = self.d_model * getattr(cfg, "ffn_multiplier", 4)
 
         self.blocks = nn.ModuleList([
             TransformerBlock(config=cfg, layer_idx=i)
@@ -79,6 +79,6 @@ class BlockStack(nn.Module):
             Output hidden state tensor of shape (batch_size, seq_len, d_model)
         """
         for block in self.blocks:
-            h = block(h, mask=mask, kv_cache=kv_cache)
+            h = block(h, mask=mask, kv_cache=kv_cache, **kwargs)
 
         return self.final_ln(h)

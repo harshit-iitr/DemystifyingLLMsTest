@@ -1,7 +1,7 @@
 """Combined sampler (Clean)."""
 import torch
 import torch.nn.functional as F
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Any
 from .temperature import apply_temperature
 from .top_k import apply_top_k
 from .top_p import apply_top_p
@@ -16,6 +16,14 @@ class Sampler:
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
     ):
+        if temperature < 0.0:
+            raise ValueError("temperature must be non-negative")
+        if top_k < 0:
+            raise ValueError("top_k must be non-negative")
+        if not 0.0 <= top_p <= 1.0:
+            raise ValueError("top_p must be in [0.0, 1.0]")
+        if repetition_penalty <= 0.0:
+            raise ValueError("repetition_penalty must be positive")
         self.temperature = temperature
         self.top_k = top_k
         self.top_p = top_p
@@ -25,6 +33,7 @@ class Sampler:
         self,
         logits: torch.Tensor,
         generated_tokens: Optional[Union[List[int], torch.Tensor]] = None,
+        generator: Optional[Any] = None,
     ) -> torch.Tensor:
         """
         Sample next token from logits tensor of shape (batch_size, vocab_size) or (vocab_size,).
@@ -32,10 +41,16 @@ class Sampler:
         logits = logits.clone()
         if logits.dim() == 1:
             logits = logits.unsqueeze(0)
+        if logits.dim() != 2:
+            raise ValueError("logits must have shape (vocab_size,) or (batch_size, vocab_size)")
 
         # 1. Repetition penalty
         if self.repetition_penalty != 1.0 and generated_tokens is not None:
             logits = apply_repetition_penalty(logits, generated_tokens, penalty=self.repetition_penalty)
+
+        if self.temperature <= 0.0:
+            return torch.argmax(logits, dim=-1)
+        logits = apply_temperature(logits, temperature=self.temperature)
 
         # 2. Top-K
         if self.top_k > 0:
@@ -45,17 +60,8 @@ class Sampler:
         if self.top_p < 1.0:
             logits = apply_top_p(logits, p=self.top_p)
 
-        # 4. Temperature
-        if self.temperature != 1.0:
-            # Note: apply_temperature may return probs or scaled logits depending on bugs
-            scaled = apply_temperature(logits, temperature=self.temperature)
-            if torch.allclose(scaled.sum(dim=-1), torch.ones(logits.size(0), device=logits.device), atol=1e-3):
-                probs = scaled
-            else:
-                probs = F.softmax(scaled, dim=-1)
-        else:
-            probs = F.softmax(logits, dim=-1)
+        probs = F.softmax(logits, dim=-1)
 
         # 5. Multinomial sample
-        next_token = torch.multinomial(probs, num_samples=1)
+        next_token = torch.multinomial(probs, num_samples=1, generator=generator)
         return next_token.squeeze(-1)

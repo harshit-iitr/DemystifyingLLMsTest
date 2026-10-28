@@ -1,8 +1,6 @@
 """
 Scaled Dot-Product Attention implementation.
 
-  - M1: Missing / sqrt(d_k) scaling in attention scores
-  - H5: Softmax applied along dim=-2 instead of dim=-1
 """
 
 import math
@@ -38,13 +36,16 @@ def scaled_dot_product_attention(
     # Compute raw query-key dot products: (batch, n_heads, seq_len_q, seq_len_k)
     scores = torch.matmul(q, k.transpose(-2, -1))
 
-    # scores = scores / math.sqrt(d_k)
+    scores = scores / math.sqrt(d_k)
 
     if mask is not None:
         scores = scores + mask
 
-    # attn_weights = F.softmax(scores, dim=-1)
-    attn_weights = F.softmax(scores, dim=-2)
+    # Left-padded query rows can have no visible keys. Avoid propagating NaNs
+    # from those rows into cached values in subsequent layers.
+    fully_masked = torch.isneginf(scores).all(dim=-1, keepdim=True)
+    attn_weights = F.softmax(scores.masked_fill(fully_masked, 0.0), dim=-1)
+    attn_weights = attn_weights.masked_fill(fully_masked, 0.0)
 
     if dropout is not None:
         attn_weights = dropout(attn_weights)
