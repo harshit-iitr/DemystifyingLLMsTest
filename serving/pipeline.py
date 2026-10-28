@@ -5,6 +5,7 @@ End-to-end serving pipeline connecting tokenization, model execution, and decodi
 from typing import Optional, Any, Union, List
 import torch
 import torch.nn as nn
+import inspect
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
@@ -61,13 +62,22 @@ class ServingPipeline:
         input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
         if hasattr(self.model, "eval"):
             self.model.eval()
+        use_cache = self.inference_config.use_kv_cache
+        if use_cache:
+            try:
+                parameters = inspect.signature(self.model.forward if isinstance(self.model, nn.Module) else self.model).parameters
+                accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+                use_cache = "kv_cache" in parameters or accepts_kwargs
+            except (TypeError, ValueError):
+                use_cache = False
+
         with torch.no_grad():
             output_ids = autoregressive_generate(
                 self.model,
                 input_ids,
                 max_new_tokens=(max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens),
                 eos_token_id=(self.inference_config.stop_token_ids[0] if self.inference_config.stop_token_ids else None),
-                use_cache=self.inference_config.use_kv_cache,
+                use_cache=use_cache,
             )
         completion_tokens = output_ids[0, input_ids.size(1):].tolist()
         output_tokens = output_ids[0].tolist()
