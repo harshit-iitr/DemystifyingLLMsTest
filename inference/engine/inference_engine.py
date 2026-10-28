@@ -9,6 +9,8 @@ import torch.nn as nn
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from utils.logging_utils import get_logger
+from inference.generation.autoregressive import autoregressive_generate
+from inference.sampling.sampler import Sampler
 
 logger = get_logger("inference_engine")
 
@@ -75,6 +77,7 @@ class InferenceEngine:
         Internal lifecycle helper to prepare model state before inference execution.
         """
         if self.model is not None and hasattr(self.model, "train"):
+            self.model.to(self.device)
             self.model.eval()
 
     def generate_tokens(
@@ -94,39 +97,36 @@ class InferenceEngine:
         if max_tokens <= 0:
             return list(prompt_tokens)
 
+        if self.model is None or not callable(self.model):
+            self._failed = True
+            raise RuntimeError("No model is available for token generation")
+
         temp = temperature if temperature is not None else self.inference_config.temperature
-        tokens = list(prompt_tokens)
+        sampler = Sampler(
+            temperature=temp,
+            top_k=self.inference_config.top_k if top_k is None else top_k,
+            top_p=self.inference_config.top_p if top_p is None else top_p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
+        input_tensor = torch.tensor([prompt_tokens], dtype=torch.long, device=self.device)
 
-        # Autoregressive generation loop
-        with torch.no_grad():
-            for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        history = list(prompt_tokens)
 
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        if isinstance(logits, tuple):
-                            logits = logits[0]
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+        def sample_next(logits: torch.Tensor) -> torch.Tensor:
+            token = sampler.sample(logits, generated_tokens=history)
+            history.append(int(token.reshape(-1)[0].item()))
+            return token
 
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        raise
-                else:
-                    self._failed = True
-                    raise RuntimeError("No model is available for token generation")
-
-                tokens.append(int(next_token))
-
-                if next_token in self.inference_config.stop_token_ids:
-                    break
-
-        return tokens
+        output = autoregressive_generate(
+            self.model,
+            input_tensor,
+            max_new_tokens=max_tokens,
+            eos_token_id=(self.inference_config.stop_token_ids[0]
+                          if self.inference_config.stop_token_ids else None),
+            sampler_fn=sample_next,
+            use_cache=self.inference_config.use_kv_cache,
+        )
+        return output.squeeze(0).tolist()
 
     def generate(
         self,

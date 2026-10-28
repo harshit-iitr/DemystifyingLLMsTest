@@ -1,5 +1,6 @@
 """Module implementation."""
 import torch
+import inspect
 from typing import Optional, List, Callable
 from .kv_cache import KVCache
 from .stop_criteria import StopCriteria
@@ -18,9 +19,23 @@ def autoregressive_generate(
     input_ids shape: (batch_size, seq_len)
     """
     generated = input_ids.clone()
+    if generated.ndim != 2:
+        raise ValueError("input_ids must have shape (batch_size, seq_len)")
+    if generated.size(1) == 0:
+        raise ValueError("input_ids must contain at least one token")
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
 
+    forward = getattr(model, "forward", model)
+    try:
+        parameters = inspect.signature(forward).parameters.values()
+        accepts_cache = any(
+            parameter.name == "kv_cache" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        accepts_cache = False
+    use_cache = use_cache and accepts_cache
     kv_cache = KVCache(num_layers=getattr(model, "num_layers", getattr(getattr(model, "config", None), "n_layers", 12))) if use_cache else None
 
     for _ in range(max_new_tokens):
