@@ -14,6 +14,11 @@ def run(name, fn):
         ok = False; err = "".join(traceback.format_exception_only(type(e), e)).strip()
     results.append((name, ok, err)); print(("PASS " if ok else "FAIL ") + name + (f"  -> {err}" if err else ""))
 
+def _raises(fn, exc):
+    try: fn()
+    except exc: return True
+    return False
+
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from config.server_config import ServerConfig
@@ -55,10 +60,6 @@ run("BPE merges repeated pairs", lambda: BPETokenizer(merges=[("a", "a")]).bpe("
 
 # ---- embeddings
 run("embedding rejects out-of-range ids", lambda: _raises(lambda: TokenEmbedding(10, 4)(torch.tensor([[11]])), IndexError))
-def _raises(fn, exc):
-    try: fn()
-    except exc: return True
-    return False
 run("embedding layer shape", lambda: EmbeddingLayer(config=cfg)(torch.randint(0, 100, (2, 7))).shape == (2, 7, 32))
 
 # ---- RoPE
