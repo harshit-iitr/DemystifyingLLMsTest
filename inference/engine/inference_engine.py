@@ -9,6 +9,7 @@ import torch.nn as nn
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from utils.logging_utils import get_logger
+from inference.sampling import Sampler
 
 logger = get_logger("inference_engine")
 
@@ -19,16 +20,21 @@ class FullTransformerModel(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
+        self.num_layers = config.n_layers
         from model.embeddings import EmbeddingLayer
         from model.blocks import BlockStack
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        if config.tie_weights:
+            self.lm_head.tie_weights(self.embeddings.token_embedding.embedding.weight)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        kv_cache = kwargs.get("kv_cache")
+        offset = kv_cache.get_seq_length(0) if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
         h = self.blocks(h, **kwargs)
         logits = self.lm_head(h)
         return logits
@@ -53,6 +59,7 @@ class InferenceEngine:
             self.model_config = ModelConfig(d_model=768, vocab_size=50257)
 
         self.inference_config = inference_config or InferenceConfig()
+        self.inference_config.validate()
         self.device = torch.device(device) if device else torch.device("cpu")
 
         if model is not None:
@@ -68,8 +75,11 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None:
+            if hasattr(self.model, "to"):
+                self.model.to(self.device)
+            if hasattr(self.model, "eval"):
+                self.model.eval()
 
     def generate_tokens(
         self,
@@ -77,7 +87,8 @@ class InferenceEngine:
         max_new_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         top_k: Optional[int] = None,
-        top_p: Optional[float] = None
+        top_p: Optional[float] = None,
+        eos_token_id: Optional[int] = None,
     ) -> List[int]:
         """
         Generate a list of token IDs autoregressively from input token sequence.
@@ -85,40 +96,64 @@ class InferenceEngine:
         self._prepare_model()
 
         max_tokens = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
+        if max_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative")
         if max_tokens <= 0:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
         tokens = list(prompt_tokens)
+        if not tokens:
+            raise ValueError("prompt_tokens must contain at least one token")
+        sampler = Sampler(
+            temperature=temp,
+            top_k=self.inference_config.top_k if top_k is None else top_k,
+            top_p=self.inference_config.top_p if top_p is None else top_p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
+        generator = None
+        if self.inference_config.seed is not None and temp > 0:
+            generator = torch.Generator(device=self.device)
+            generator.manual_seed(self.inference_config.seed)
 
-        # Autoregressive generation loop
-        with torch.no_grad():
-            for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        if self.model is None or not callable(self.model):
+            self._failed = True
+            raise RuntimeError("No callable model is available for inference")
 
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+        from inference.generation.autoregressive import autoregressive_generate
 
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
-                else:
-                    self._failed = True
-                    next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+        input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
-                tokens.append(int(next_token))
+        def sample_next(logits: torch.Tensor) -> torch.Tensor:
+            next_token = sampler.sample(logits, tokens, generator=generator)
+            tokens.extend(next_token.detach().cpu().reshape(-1).tolist())
+            return next_token
 
-                if next_token in self.inference_config.stop_token_ids:
-                    break
+        import inspect
+        forward = getattr(self.model, "forward", self.model)
+        try:
+            supports_cache = "kv_cache" in inspect.signature(forward).parameters or any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in inspect.signature(forward).parameters.values()
+            )
+        except (TypeError, ValueError):
+            supports_cache = False
 
-        return tokens
+        try:
+            with torch.no_grad():
+                output = autoregressive_generate(
+                    self.model,
+                    input_tensor,
+                    max_new_tokens=max_tokens,
+                    eos_token_id=eos_token_id,
+                    sampler_fn=sample_next,
+                    use_cache=self.inference_config.use_kv_cache and supports_cache,
+                    stop_token_ids=self.inference_config.stop_token_ids,
+                )
+        except Exception:
+            self._failed = True
+            raise
+        return output[0].detach().cpu().tolist()
 
     def generate(
         self,
@@ -137,25 +172,20 @@ class InferenceEngine:
         if tokenizer is not None and hasattr(tokenizer, "encode"):
             try:
                 prompt_ids = tokenizer.encode(prompt)
-            except Exception:
-                prompt_ids = [ord(c) for c in prompt]
+            except Exception as exc:
+                raise ValueError("Tokenizer failed to encode the prompt") from exc
         else:
-            prompt_ids = [ord(c) for c in prompt]
+            raise ValueError("A tokenizer with encode/decode methods is required")
 
         # Generate tokens
         output_ids = self.generate_tokens(
             prompt_tokens=prompt_ids,
             max_new_tokens=max_new_tokens,
+            eos_token_id=getattr(getattr(tokenizer, "vocab", None), "eos_token_id", None),
             **kwargs
         )
 
-        # Decode generated tokens
-        if not getattr(self, "_failed", False) and tokenizer is not None and hasattr(tokenizer, "decode"):
-            try:
-                return tokenizer.decode(output_ids)
-            except Exception:
-                pass
+        if tokenizer is None or not hasattr(tokenizer, "decode"):
+            raise ValueError("A tokenizer with encode/decode methods is required")
+        return tokenizer.decode(output_ids)
 
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation

@@ -1,6 +1,6 @@
 """Module implementation."""
 import torch
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Iterable
 from .kv_cache import KVCache
 from .stop_criteria import StopCriteria
 
@@ -12,20 +12,31 @@ def autoregressive_generate(
     eos_token_id: Optional[int] = None,
     sampler_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     use_cache: bool = False,
+    stop_token_ids: Optional[Iterable[int]] = None,
 ) -> torch.Tensor:
     """
     Generate tokens autoregressively.
     input_ids shape: (batch_size, seq_len)
     """
     generated = input_ids.clone()
+    if max_new_tokens < 0:
+        raise ValueError("max_new_tokens must be non-negative")
+    if generated.dim() != 2 or generated.size(1) == 0:
+        raise ValueError("input_ids must have shape (batch_size, non-zero sequence length)")
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
+    stop_ids = set(stop_token_ids or ())
+    if eos_token_id is not None:
+        stop_ids.add(eos_token_id)
+    if any(token_id < 0 for token_id in stop_ids):
+        raise ValueError("stop token IDs must be non-negative")
 
     kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
 
     for _ in range(max_new_tokens):
         if kv_cache is not None:
-            model_inputs = generated
+            past_length = kv_cache.get_seq_length(0)
+            model_inputs = generated if past_length == 0 else generated[:, -1:]
             logits = model(model_inputs, kv_cache=kv_cache)
         else:
             logits = model(generated)
@@ -44,10 +55,12 @@ def autoregressive_generate(
             next_token = next_token.unsqueeze(-1)
 
         # generated = torch.cat([generated, next_token], dim=-1) is correct
-        generated = torch.cat([next_token, generated], dim=-1)
+        generated = torch.cat([generated, next_token], dim=-1)
 
-        last_id = next_token[0].item() if batch_size == 1 else None
-        if stop_criteria.should_stop(generated.size(1), last_id):
+        if generated.size(1) >= stop_criteria.max_length:
+            break
+        if stop_ids and bool(torch.isin(next_token, torch.tensor(sorted(stop_ids), device=next_token.device)).all()):
             break
 
     return generated
+

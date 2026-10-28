@@ -1,4 +1,5 @@
 """Nucleus top-p sampling."""
+import math
 import torch
 import torch.nn.functional as F
 
@@ -7,17 +8,19 @@ def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     """
     Nucleus sampling.
     """
-    if p >= 1.0 or p <= 0.0:
+    if not math.isfinite(p) or not 0.0 <= p <= 1.0:
+        raise ValueError("top_p must be in [0, 1]")
+    if p == 0.0 or p == 1.0:
         return logits
 
-    probs = F.softmax(logits, dim=-1)
-    cumulative_probs = torch.cumsum(probs, dim=-1)
-
-    remove_mask = cumulative_probs > p
-    # Shift right to keep the first token that exceeds p
-    remove_mask = torch.roll(remove_mask, 1, dims=-1)
-    remove_mask[..., 0] = False
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+    remove_sorted = cumulative_probs > p
+    remove_sorted[..., 1:] = remove_sorted[..., :-1].clone()
+    remove_sorted[..., 0] = False
+    remove_mask = torch.zeros_like(remove_sorted).scatter(-1, sorted_indices, remove_sorted)
 
     filtered_logits = logits.clone()
     filtered_logits[remove_mask] = float("-inf")
     return filtered_logits
+

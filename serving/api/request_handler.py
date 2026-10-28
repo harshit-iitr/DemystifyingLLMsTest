@@ -4,6 +4,8 @@ HTTP API request parsing, validation, and execution handler.
 
 import time
 import uuid
+import math
+import inspect
 from typing import Dict, Any, Optional, List
 from utils.logging_utils import get_logger
 
@@ -29,30 +31,74 @@ class RequestHandler:
         Returns:
             Formatted response dictionary.
         """
+        if not isinstance(request_body, dict):
+            raise TypeError("request body must be a JSON object")
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        if not isinstance(prompt, str):
+            raise TypeError("prompt must be a string")
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not math.isfinite(temperature) or temperature < 0:
+            raise ValueError("temperature must be a finite non-negative number")
 
         # Tokenize prompt
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            prompt_tokens = self.tokenizer.encode(prompt)
-        else:
-            prompt_tokens = [ord(c) for c in prompt]
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise ValueError("A tokenizer with encode/decode methods is required")
+        prompt_tokens = self.tokenizer.encode(prompt)
 
+        completion_text = None
         # Generate continuation
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
-            generated_tokens = self.engine.generate_tokens(
-                prompt_tokens=prompt_tokens,
-                max_new_tokens=max_tokens,
-                temperature=temperature
-            )
+            generate_tokens = self.engine.generate_tokens
+            token_kwargs = {
+                "prompt_tokens": prompt_tokens,
+                "max_new_tokens": max_tokens,
+                "temperature": temperature,
+                "top_k": request_body.get("top_k"),
+                "top_p": request_body.get("top_p"),
+                "eos_token_id": getattr(getattr(self.tokenizer, "vocab", None), "eos_token_id", None),
+            }
+            try:
+                signature = inspect.signature(generate_tokens)
+                if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
+                    token_kwargs = {k: v for k, v in token_kwargs.items() if k in signature.parameters}
+            except (TypeError, ValueError):
+                pass
+            generated_tokens = generate_tokens(**token_kwargs)
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            generate = self.engine.generate
+            generate_kwargs = {
+                "tokenizer": self.tokenizer,
+                "max_new_tokens": max_tokens,
+                "temperature": temperature,
+                "top_k": request_body.get("top_k"),
+                "top_p": request_body.get("top_p"),
+            }
+            try:
+                signature = inspect.signature(generate)
+                if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
+                    generate_kwargs = {k: v for k, v in generate_kwargs.items() if k in signature.parameters}
+            except (TypeError, ValueError):
+                pass
+            raw_gen = generate(prompt, **generate_kwargs)
+            completion_text = raw_gen[len(prompt):] if isinstance(raw_gen, str) and raw_gen.startswith(prompt) else raw_gen
+            try:
+                completion_tokens = self.tokenizer.encode(completion_text, add_bos=False)
+            except TypeError:
+                completion_tokens = self.tokenizer.encode(completion_text)
+            generated_tokens = prompt_tokens + completion_tokens
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("No inference engine is available")
 
-        response_text = generated_tokens
+        response_text = completion_text if completion_text is not None else self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+        completion_count = max(0, len(generated_tokens) - len(prompt_tokens))
+        stop_ids = set(getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", []))
+        tokenizer_eos = getattr(getattr(self.tokenizer, "vocab", None), "eos_token_id", None)
+        if tokenizer_eos is not None:
+            stop_ids.add(tokenizer_eos)
+        finish_reason = "stop" if generated_tokens and generated_tokens[-1] in stop_ids else "length"
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,12 +110,12 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
+                "completion_tokens": completion_count,
                 "total_tokens": len(generated_tokens)
             }
         }
@@ -95,3 +141,4 @@ class RequestHandler:
                 }
             ]
         }
+
