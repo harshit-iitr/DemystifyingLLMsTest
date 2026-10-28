@@ -9,6 +9,7 @@ import torch.nn as nn
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from utils.logging_utils import get_logger
+from inference.engine.inference_engine import InferenceEngine
 
 logger = get_logger("serving_pipeline")
 
@@ -52,19 +53,20 @@ class ServingPipeline:
         else:
             tokens = [ord(c) for c in text]
 
-        input_ids = tokens
-
-        # Step 2: Model Forward Execution
+        # Step 2: Autoregressive generation
         if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
+            engine = InferenceEngine(
+                model_config=self.config,
+                inference_config=self.inference_config,
+                model=self.model,
+                device=self.device,
+            )
+            out_tokens = engine.generate_tokens(prompt_tokens=tokens, max_new_tokens=max_new_tokens)
         else:
-            output = None
+            out_tokens = tokens
 
         # Step 3: Decoding
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
+            return self.tokenizer.decode(out_tokens)
 
-        return f"{text} [processed]"
+        return "".join(chr(i) for i in out_tokens if 0 <= i < 0x110000)

@@ -19,7 +19,7 @@ class ModelLoader:
     into transformer model instances.
     """
 
-    DEFAULT_WEIGHTS_FILE = "model_weights.pth"
+    DEFAULT_WEIGHTS_FILE = "model_weights.pt"
     DEFAULT_WEIGHTS_DIR = "weights"
 
     def __init__(self, weights_path: Optional[str] = None):
@@ -33,7 +33,7 @@ class ModelLoader:
     def load_weights(
         self,
         model: nn.Module,
-        strict: bool = False,
+        strict: bool = True,
         map_location: str = "cpu"
     ) -> nn.Module:
         """

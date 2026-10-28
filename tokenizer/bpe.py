@@ -1,4 +1,5 @@
 """Module implementation."""
+import re
 from typing import List, Dict, Tuple, Optional
 from .vocab import Vocabulary
 
@@ -19,12 +20,10 @@ class BPETokenizer:
     def _merge_word(self, pieces: List[str], pair: Tuple[str, str]) -> List[str]:
         new_pieces = []
         i = 0
-        merged = False
         while i < len(pieces):
-            if not merged and i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
+            if i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
                 new_pieces.append(pair[0] + pair[1])
                 i += 2
-                merged = True
             else:
                 new_pieces.append(pieces[i])
                 i += 1
@@ -37,20 +36,26 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
+        ranks = {pair: rank for rank, pair in reversed(list(enumerate(self.merges)))}
 
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        while len(pieces) > 1:
+            candidates = [p for p in self._get_stats(pieces) if p in ranks]
+            if not candidates:
                 break
-            pieces = self._merge_word(pieces, pair)
+            best = min(candidates, key=lambda p: ranks[p])
+            pieces = self._merge_word(pieces, best)
 
         return pieces
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split(" "):
-            if word:
-                tokens.extend(self.bpe(word))
+        for chunk in re.findall(r" ?\S+|\s+", text):
+            if chunk.startswith(" ") and len(chunk) > 1:
+                pieces = self.bpe(chunk[1:])
+                pieces[0] = " " + pieces[0]
+                tokens.extend(pieces)
+            else:
+                tokens.extend(self.bpe(chunk))
         return tokens
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:
