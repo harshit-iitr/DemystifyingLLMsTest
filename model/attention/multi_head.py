@@ -123,6 +123,6 @@ class MultiHeadAttention(nn.Module):
 
         # 6. Recombine heads
         # context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
-        context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-2)
+        context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
 
         return self.out_proj(context)
