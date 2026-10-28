@@ -5,7 +5,7 @@ from .vocab import Vocabulary
 
 class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
-        self.vocab = vocab or Vocabulary()
+        self.vocab = vocab if vocab is not None else Vocabulary()
         self.merges: List[Tuple[str, str]] = merges or []
         self.vocab_size = max(self.vocab._id_to_token, default=-1) + 1
 

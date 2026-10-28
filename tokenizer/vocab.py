@@ -7,21 +7,19 @@ class Vocabulary:
     def __init__(self, vocab_dict: Optional[Dict[str, int]] = None):
         self._token_to_id: Dict[str, int] = {}
         self._id_to_token: Dict[int, str] = {}
+        self._dynamic = vocab_dict is None
         if vocab_dict is not None:
             for token, idx in vocab_dict.items():
                 self.add_token(token, idx)
-        self.pad_token_id = self._ensure_special(PAD_TOKEN, 0)
-        self.unk_token_id = self._ensure_special(UNK_TOKEN, 1)
-        self.bos_token_id = self._ensure_special(BOS_TOKEN, 50256)
-        self.eos_token_id = self.bos_token_id
-
-    def _ensure_special(self, token: str, preferred_id: int) -> int:
-        if token in self._token_to_id:
-            return self._token_to_id[token]
-        idx = preferred_id
-        if idx in self._id_to_token:
-            idx = max(self._id_to_token, default=-1) + 1
-        return self.add_token(token, idx)
+            self.pad_token_id = self._token_to_id.get(PAD_TOKEN, 0)
+            self.unk_token_id = self._token_to_id.get(UNK_TOKEN, self.pad_token_id)
+            self.bos_token_id = self._token_to_id.get(BOS_TOKEN)
+            self.eos_token_id = self._token_to_id.get(EOS_TOKEN, self.bos_token_id)
+        else:
+            self.pad_token_id = self.add_token(PAD_TOKEN, 0)
+            self.unk_token_id = self.add_token(UNK_TOKEN, 1)
+            self.bos_token_id = self.add_token(BOS_TOKEN, 50256)
+            self.eos_token_id = self.bos_token_id
 
     def add_token(self, token: str, idx: Optional[int] = None) -> int:
         if token in self._token_to_id:
@@ -39,6 +37,8 @@ class Vocabulary:
     def token_to_id(self, token: str) -> int:
         if token in self._token_to_id:
             return self._token_to_id[token]
+        if not self._dynamic:
+            return self.unk_token_id
         return self.add_token(token)
 
     def id_to_token(self, idx: int) -> str:

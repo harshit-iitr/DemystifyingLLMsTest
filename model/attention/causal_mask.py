@@ -16,7 +16,7 @@ def create_causal_mask(
     key_len: Optional[int] = None,
 ) -> torch.Tensor:
     """
-    Generate an additive causal attention mask of shape (1, 1, seq_len, seq_len).
+    Generate an additive causal attention mask of shape (1, 1, query_len, key_len).
 
     In causal attention:
       Positions where j <= i should have value 0.0 (allowed).
@@ -24,7 +24,6 @@ def create_causal_mask(
 
     Future positions (j > i) are masked with -inf.
     """
-    # mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype), diagonal=1)
     if seq_len < 0 or past_len < 0:
         raise ValueError("seq_len and past_len must be non-negative")
     total_key_len = past_len + seq_len if key_len is None else key_len
