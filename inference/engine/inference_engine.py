@@ -19,17 +19,24 @@ class FullTransformerModel(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
+        self.num_layers = getattr(config, "n_layers", 12)
         from model.embeddings import EmbeddingLayer
         from model.blocks import BlockStack
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
 
-    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
-        h = self.blocks(h, **kwargs)
+        if getattr(config, "tie_weights", True):
+            self.lm_head.tie_weights(self.embeddings.token_embedding.embedding.weight)
+
+    def forward(self, input_ids: torch.Tensor, kv_cache: Optional[Any] = None, **kwargs) -> torch.Tensor:
+        offset = 0
+        if kv_cache is not None and hasattr(kv_cache, "get_seq_length"):
+            offset = kv_cache.get_seq_length()
+        h = self.embeddings(input_ids, offset=offset)
+        h = self.blocks(h, kv_cache=kv_cache, **kwargs)
         logits = self.lm_head(h)
         return logits
 
@@ -68,8 +75,8 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None and hasattr(self.model, "eval"):
+            self.model.eval()
 
     def generate_tokens(
         self,
@@ -91,6 +98,16 @@ class InferenceEngine:
         temp = temperature if temperature is not None else self.inference_config.temperature
         tokens = list(prompt_tokens)
 
+        from inference.sampling.sampler import Sampler
+        k = top_k if top_k is not None else self.inference_config.top_k
+        p = top_p if top_p is not None else self.inference_config.top_p
+        sampler = Sampler(
+            temperature=temp,
+            top_k=k,
+            top_p=p,
+            repetition_penalty=getattr(self.inference_config, "repetition_penalty", 1.0)
+        )
+
         # Autoregressive generation loop
         with torch.no_grad():
             for _ in range(max_tokens):
@@ -100,12 +117,7 @@ class InferenceEngine:
                     try:
                         logits = self.model(input_tensor)
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
-
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
+                        next_token = sampler.sample(next_token_logits, generated_tokens=tokens).item()
                     except Exception:
                         self._failed = True
                         next_token = (tokens[-1] + 1) % self.model_config.vocab_size
@@ -133,6 +145,13 @@ class InferenceEngine:
         self._prepare_model()
         self._failed = False
 
+        if tokenizer is None:
+            try:
+                from tokenizer.bpe import BPETokenizer
+                tokenizer = BPETokenizer()
+            except Exception:
+                tokenizer = None
+
         # Tokenize prompt
         if tokenizer is not None and hasattr(tokenizer, "encode"):
             try:
@@ -150,12 +169,13 @@ class InferenceEngine:
         )
 
         # Decode generated tokens
-        if not getattr(self, "_failed", False) and tokenizer is not None and hasattr(tokenizer, "decode"):
+        if tokenizer is not None and hasattr(tokenizer, "decode"):
             try:
                 return tokenizer.decode(output_ids)
             except Exception:
                 pass
 
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation
+        try:
+            return "".join(chr(c) for c in output_ids)
+        except Exception:
+            return prompt

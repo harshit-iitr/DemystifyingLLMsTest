@@ -92,10 +92,13 @@ class EmbeddingLayer(nn.Module):
         if not isinstance(input_ids, torch.Tensor):
             raise TypeError(f"EmbeddingLayer expected torch.Tensor, got {type(input_ids)}")
 
+        if input_ids.dim() == 1:
+            input_ids = input_ids.unsqueeze(0)
+
         batch_size, seq_len = input_ids.shape
         tok_emb = self.token_embedding(input_ids)
         pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
 
-        embeddings = tok_emb * pos_emb
+        embeddings = tok_emb + pos_emb
 
         return self.dropout(embeddings)

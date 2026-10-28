@@ -19,7 +19,7 @@ class ModelLoader:
     into transformer model instances.
     """
 
-    DEFAULT_WEIGHTS_FILE = "model_weights.pth"
+    DEFAULT_WEIGHTS_FILE = "model_weights.pt"
     DEFAULT_WEIGHTS_DIR = "weights"
 
     def __init__(self, weights_path: Optional[str] = None):
@@ -47,6 +47,13 @@ class ModelLoader:
         Returns:
             Model with updated parameter states.
         """
+        if not os.path.exists(self.weights_path):
+            alt_ext = ".pth" if self.weights_path.endswith(".pt") else ".pt"
+            base, _ = os.path.splitext(self.weights_path)
+            alt_path = base + alt_ext
+            if os.path.exists(alt_path):
+                self.weights_path = alt_path
+
         if not os.path.exists(self.weights_path):
             raise FileNotFoundError(
                 f"Model weights file could not be found at: '{self.weights_path}'. "
