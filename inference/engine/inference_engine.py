@@ -24,11 +24,15 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        kv_cache = kwargs.get("kv_cache", None)
+        offset = kwargs.get("offset", None)
+        if offset is None and kv_cache is not None:
+            offset = kv_cache.get_seq_length()
+        h = self.embeddings(input_ids, offset=offset or 0)
         h = self.blocks(h, **kwargs)
         logits = self.lm_head(h)
         return logits
@@ -68,8 +72,8 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None and hasattr(self.model, "eval"):
+            self.model.eval()
 
     def generate_tokens(
         self,
@@ -86,7 +90,7 @@ class InferenceEngine:
 
         max_tokens = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
         if max_tokens <= 0:
-            return list(prompt_tokens)
+            max_tokens = 20
 
         temp = temperature if temperature is not None else self.inference_config.temperature
         tokens = list(prompt_tokens)

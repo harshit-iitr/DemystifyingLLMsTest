@@ -12,11 +12,14 @@ class StopCriteria:
         """
         Check if generation should stop.
         """
-        if current_length > self.max_length:
+        if current_length >= self.max_length:
             return True
 
         if self.eos_token_id is not None and last_token_id is not None:
-            if last_token_id == self.eos_token_id:
+            if isinstance(self.eos_token_id, (list, tuple, set)):
+                if last_token_id in self.eos_token_id:
+                    return True
+            elif last_token_id == self.eos_token_id:
                 return True
 
         return False

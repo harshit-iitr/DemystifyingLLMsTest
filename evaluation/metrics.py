@@ -65,7 +65,7 @@ def token_accuracy(
     Returns:
         Accuracy fraction in range [0.0, 1.0].
     """
-    if predictions.dim() == 3:
+    if predictions.is_floating_point() or predictions.dim() > targets.dim():
         pred_ids = torch.argmax(predictions, dim=-1)
     else:
         pred_ids = predictions
