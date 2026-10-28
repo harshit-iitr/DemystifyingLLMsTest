@@ -4,6 +4,8 @@
 
 ---
 
+The Challenge is now closed.
+
 ## 🎯 Your Mission
 
 This repository contains a **complete transformer inference platform** built from scratch in PyTorch — tokenizer, model architecture, sampling, generation loop, serving layer, and more.
