@@ -12,6 +12,7 @@ import torch.nn as nn
 
 from .scaled_dot_product import scaled_dot_product_attention
 from .causal_mask import create_causal_mask
+from .rotary_pe import RotaryEmbedding, apply_rotary_pos_emb
 
 
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
@@ -59,6 +60,14 @@ class MultiHeadAttention(nn.Module):
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"
             )
         self.d_head = self.d_model // self.n_heads
+        self.rotary_emb = (
+            RotaryEmbedding(
+                dim=self.d_head,
+                max_seq_len=getattr(cfg, "max_seq_len", 1024),
+            )
+            if getattr(cfg, "use_rotary", False)
+            else None
+        )
 
         # self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         # self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
@@ -103,6 +112,11 @@ class MultiHeadAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
 
+        if self.rotary_emb is not None:
+            position_offset = kv_cache.get_seq_length(layer_idx or 0) if kv_cache is not None else 0
+            cos, sin = self.rotary_emb(q, seq_len=seq_len, offset=position_offset)
+            q, k = apply_rotary_pos_emb(q, k, cos, sin)
+
         # 3. Update KV cache if provided
         if kv_cache is not None and layer_idx is not None:
             k, v = kv_cache.update(layer_idx, k, v)
@@ -125,3 +139,4 @@ class MultiHeadAttention(nn.Module):
         context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
 
         return self.out_proj(context)
+

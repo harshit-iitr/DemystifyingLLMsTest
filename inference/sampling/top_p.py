@@ -1,4 +1,5 @@
 """Nucleus top-p sampling."""
+import math
 import torch
 import torch.nn.functional as F
 
@@ -7,7 +8,9 @@ def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     """
     Nucleus sampling.
     """
-    if p >= 1.0:
+    if not math.isfinite(p) or not 0.0 <= p <= 1.0:
+        raise ValueError("top_p must be in [0, 1]")
+    if p == 0.0 or p == 1.0:
         return logits
 
     sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
@@ -20,3 +23,4 @@ def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     filtered_logits = logits.clone()
     filtered_logits[remove_mask] = float("-inf")
     return filtered_logits
+

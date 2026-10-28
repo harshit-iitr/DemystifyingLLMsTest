@@ -31,6 +31,7 @@ def apply_repetition_penalty(
     else:
         token_rows = [list(generated_tokens)] * (logits.size(0) if logits.ndim > 1 else 1)
 
+    logits = logits.contiguous()
     flat_logits = logits.reshape(-1, logits.size(-1))
     if len(token_rows) == 1 and flat_logits.size(0) > 1:
         token_rows *= flat_logits.size(0)
