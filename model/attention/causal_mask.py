@@ -11,21 +11,20 @@ import torch.nn as nn
 def create_causal_mask(
     seq_len: int,
     device: Optional[torch.device] = None,
-    dtype: torch.dtype = torch.float32
+    dtype: torch.dtype = torch.float32,
+    kv_len: Optional[int] = None
 ) -> torch.Tensor:
     """
-    Generate an additive causal attention mask of shape (1, 1, seq_len, seq_len).
+    Generate an additive causal attention mask of shape (1, 1, seq_len, kv_len).
 
     In causal attention:
       Positions where j <= i should have value 0.0 (allowed).
       Positions where j > i should have value -inf (masked).
-
-    are masked with -inf and future positions (j >= i) are allowed!
     """
-    # mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype), diagonal=1)
-    mask = torch.tril(
-        torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype),
-        diagonal=-1
+    kv_len = seq_len if kv_len is None else kv_len
+    mask = torch.triu(
+        torch.full((seq_len, kv_len), float("-inf"), device=device, dtype=dtype),
+        diagonal=kv_len - seq_len + 1
     )
     return mask.unsqueeze(0).unsqueeze(0)
 

@@ -5,6 +5,13 @@ from .kv_cache import KVCache
 from .stop_criteria import StopCriteria
 
 
+def _resolve_num_layers(model: torch.nn.Module) -> int:
+    num_layers = getattr(model, "num_layers", None)
+    if num_layers is None:
+        num_layers = getattr(getattr(model, "config", None), "n_layers", None)
+    return num_layers if num_layers is not None else 12
+
+
 def autoregressive_generate(
     model: torch.nn.Module,
     input_ids: torch.Tensor,
@@ -20,12 +27,13 @@ def autoregressive_generate(
     generated = input_ids.clone()
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=generated.device)
 
-    kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
+    kv_cache = KVCache(num_layers=_resolve_num_layers(model)) if use_cache else None
 
-    for _ in range(max_new_tokens):
+    for step in range(max_new_tokens):
         if kv_cache is not None:
-            model_inputs = generated
+            model_inputs = generated if step == 0 else generated[:, -1:]
             logits = model(model_inputs, kv_cache=kv_cache)
         else:
             logits = model(generated)
@@ -43,11 +51,17 @@ def autoregressive_generate(
         if next_token.dim() == 1:
             next_token = next_token.unsqueeze(-1)
 
-        # generated = torch.cat([generated, next_token], dim=-1) is correct
-        generated = torch.cat([next_token, generated], dim=-1)
+        generated = torch.cat([generated, next_token], dim=-1)
 
-        last_id = next_token[0].item() if batch_size == 1 else None
-        if stop_criteria.should_stop(generated.size(1), last_id):
-            break
+        if batch_size == 1:
+            if stop_criteria.should_stop(generated.size(1), next_token[0].item()):
+                break
+        else:
+            if eos_token_id is not None:
+                finished |= next_token.squeeze(-1) == eos_token_id
+                if finished.all():
+                    break
+            if stop_criteria.should_stop(generated.size(1)):
+                break
 
     return generated
