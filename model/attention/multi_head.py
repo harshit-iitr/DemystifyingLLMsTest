@@ -63,10 +63,9 @@ class MultiHeadAttention(nn.Module):
         # self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         # self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         # self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        shared_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        self.q_proj = shared_proj
-        self.k_proj = shared_proj
-        self.v_proj = shared_proj
+        self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
 
         self.out_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.attn_dropout = nn.Dropout(p=dropout_p) if dropout_p > 0.0 else None
@@ -110,7 +109,15 @@ class MultiHeadAttention(nn.Module):
 
         # 4. Prepare causal mask if needed
         if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+            k_len = k.size(-2)
+            offset = k_len - seq_len  # tokens already held in the KV cache
+            if offset == 0:
+                mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+            else:
+                mask = torch.triu(
+                    torch.full((seq_len, k_len), float("-inf"), device=x.device, dtype=x.dtype),
+                    diagonal=offset + 1,
+                ).unsqueeze(0).unsqueeze(0)
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(
@@ -123,6 +130,6 @@ class MultiHeadAttention(nn.Module):
 
         # 6. Recombine heads
         # context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
-        context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-2)
+        context = attn_out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
 
         return self.out_proj(context)

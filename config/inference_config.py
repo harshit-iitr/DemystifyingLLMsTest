@@ -9,13 +9,13 @@ import json
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 50
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
     top_p: float = 0.9
     repetition_penalty: float = 1.1
-    stop_token_ids: List[int] = field(default_factory=list)
+    stop_token_ids: List[int] = field(default_factory=lambda: [50256])  # GPT-2 <|endoftext|>
     early_stopping: bool = True
     beam_width: int = 1         # 1 indicates greedy / stochastic sampling (non-beam)
     seed: Optional[int] = 42
