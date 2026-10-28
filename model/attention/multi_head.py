@@ -60,13 +60,9 @@ class MultiHeadAttention(nn.Module):
             )
         self.d_head = self.d_model // self.n_heads
 
-        # self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        shared_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        self.q_proj = shared_proj
-        self.k_proj = shared_proj
-        self.v_proj = shared_proj
+        self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
 
         self.out_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.attn_dropout = nn.Dropout(p=dropout_p) if dropout_p > 0.0 else None
@@ -105,12 +101,23 @@ class MultiHeadAttention(nn.Module):
         v = v.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
 
         # 3. Update KV cache if provided
+        past_len = 0
         if kv_cache is not None and layer_idx is not None:
+            past_len = kv_cache.get_seq_length(layer_idx)
             k, v = kv_cache.update(layer_idx, k, v)
 
         # 4. Prepare causal mask if needed
         if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+            if past_len == 0:
+                mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+            else:
+                query_positions = torch.arange(past_len, past_len + seq_len, device=x.device)
+                key_positions = torch.arange(k.size(-2), device=x.device)
+                mask = torch.where(
+                    key_positions.unsqueeze(0) > query_positions.unsqueeze(1),
+                    torch.full((seq_len, k.size(-2)), float("-inf"), device=x.device, dtype=x.dtype),
+                    torch.zeros((seq_len, k.size(-2)), device=x.device, dtype=x.dtype),
+                ).unsqueeze(0).unsqueeze(0)
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(
@@ -122,7 +129,6 @@ class MultiHeadAttention(nn.Module):
         )
 
         # 6. Recombine heads
-        # context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
-        context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-2)
+        context = attn_out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
 
         return self.out_proj(context)

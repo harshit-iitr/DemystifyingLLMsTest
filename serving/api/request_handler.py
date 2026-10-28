@@ -40,37 +40,49 @@ class RequestHandler:
             prompt_tokens = [ord(c) for c in prompt]
 
         # Generate continuation
+        completion_text = ""
+        completion_count = 0
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
+            completion_tokens = generated_tokens[len(prompt_tokens):]
+            completion_count = len(completion_tokens)
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                completion_text = self.tokenizer.decode(completion_tokens)
+            else:
+                completion_text = "".join(chr(token) for token in completion_tokens if 0 <= token <= 0x10FFFF)
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            raw_gen = self.engine.generate(
+                prompt,
+                tokenizer=self.tokenizer,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+            )
+            completion_text = raw_gen[len(prompt):] if raw_gen.startswith(prompt) else raw_gen
+            completion_count = len(self.tokenizer.encode(completion_text)) if self.tokenizer is not None else len(completion_text)
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            completion_text = ""
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
             "object": "text_completion",
             "created": int(time.time()),
             "model": "broken-transformer",
-            "text": response_text,
+            "text": completion_text,
             "choices": [
                 {
-                    "text": response_text,
+                    "text": completion_text,
                     "index": 0,
                     "finish_reason": "length"
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_count,
+                "total_tokens": len(prompt_tokens) + completion_count
             }
         }
 

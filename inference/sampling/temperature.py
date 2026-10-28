@@ -3,10 +3,10 @@ import torch
 import torch.nn.functional as F
 
 
-def apply_temperature(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
+def apply_temperature(logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
     """
     Apply temperature scaling to logits.
     """
-    probs = F.softmax(logits, dim=-1)
-    scaled = probs / temperature
-    return scaled
+    if temperature <= 0:
+        raise ValueError(f"temperature must be positive, got {temperature}")
+    return logits / temperature
