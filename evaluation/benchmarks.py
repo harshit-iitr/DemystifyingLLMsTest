@@ -25,6 +25,8 @@ def benchmark_forward_latency(
     Returns:
         Dictionary with 'mean_ms', 'min_ms', 'max_ms', and 'throughput_tokens_per_sec'.
     """
+    if warmup_runs < 0 or benchmark_runs <= 0:
+        raise ValueError("warmup_runs must be non-negative and benchmark_runs must be positive")
     model.eval()
     batch_size, seq_len = sample_input.shape
 
@@ -34,8 +36,12 @@ def benchmark_forward_latency(
 
         latencies = []
         for _ in range(benchmark_runs):
+            if sample_input.is_cuda:
+                torch.cuda.synchronize(sample_input.device)
             start = time.perf_counter()
             _ = model(sample_input)
+            if sample_input.is_cuda:
+                torch.cuda.synchronize(sample_input.device)
             end = time.perf_counter()
             latencies.append((end - start) * 1000.0)
 
@@ -47,6 +53,7 @@ def benchmark_forward_latency(
         "mean_ms": round(mean_ms, 3),
         "min_ms": round(min(latencies), 3),
         "max_ms": round(max(latencies), 3),
+        "throughput_tokens_per_sec": round(tokens_per_sec, 1),
         "tokens_per_sec": round(tokens_per_sec, 1),
     }
 

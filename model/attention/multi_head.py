@@ -12,6 +12,7 @@ import torch.nn as nn
 
 from .scaled_dot_product import scaled_dot_product_attention
 from .causal_mask import create_causal_mask
+from .rotary_pe import RotaryEmbedding, apply_rotary_pos_emb
 
 
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
@@ -50,23 +51,26 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
-        self.n_heads = n_heads or getattr(cfg, "n_heads", 12)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
+        self.n_heads = n_heads if n_heads is not None else getattr(cfg, "n_heads", 12)
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
+        if self.d_model <= 0 or self.n_heads <= 0:
+            raise ValueError("d_model and n_heads must be positive")
         if self.d_model % self.n_heads != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"
             )
         self.d_head = self.d_model // self.n_heads
+        self.rotary = (
+            RotaryEmbedding(self.d_head, max_seq_len=getattr(cfg, "max_seq_len", 2048))
+            if getattr(cfg, "use_rotary", False)
+            else None
+        )
 
-        # self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        shared_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        self.q_proj = shared_proj
-        self.k_proj = shared_proj
-        self.v_proj = shared_proj
+        self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
 
         self.out_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.attn_dropout = nn.Dropout(p=dropout_p) if dropout_p > 0.0 else None
@@ -105,12 +109,38 @@ class MultiHeadAttention(nn.Module):
         v = v.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
 
         # 3. Update KV cache if provided
+        past_len = 0
+        if kv_cache is not None and layer_idx is not None:
+            past_len = kv_cache.get_seq_length(layer_idx)
+        if self.rotary is not None:
+            cos, sin = self.rotary(q, seq_len=seq_len, offset=past_len)
+            q, k = apply_rotary_pos_emb(q, k, cos, sin)
         if kv_cache is not None and layer_idx is not None:
             k, v = kv_cache.update(layer_idx, k, v)
 
-        # 4. Prepare causal mask if needed
-        if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+        # Convert batch padding masks (1/True for valid tokens) to additive masks.
+        if mask is not None:
+            mask = torch.as_tensor(mask, device=x.device)
+            if mask.ndim == 2 and mask.shape == (batch_size, k.size(-2)):
+                is_binary = mask.dtype == torch.bool or bool(torch.all((mask == 0) | (mask == 1)))
+                if is_binary:
+                    invalid = ~mask.bool()
+                    mask = torch.zeros(
+                        (batch_size, 1, 1, k.size(-2)), device=x.device, dtype=x.dtype
+                    ).masked_fill(invalid[:, None, None, :], float("-inf"))
+                else:
+                    mask = mask.to(dtype=x.dtype)[:, None, None, :]
+            elif mask.dtype == torch.bool:
+                mask = torch.zeros_like(mask, dtype=x.dtype).masked_fill(~mask, float("-inf"))
+            else:
+                mask = mask.to(dtype=x.dtype)
+
+        # Apply the causal mask in addition to any padding mask.
+        if use_causal_mask and seq_len > 1:
+            causal_mask = create_causal_mask(
+                seq_len=seq_len, past_len=past_len, device=x.device, dtype=x.dtype
+            )
+            mask = causal_mask if mask is None else mask + causal_mask
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(
@@ -122,7 +152,6 @@ class MultiHeadAttention(nn.Module):
         )
 
         # 6. Recombine heads
-        # context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
-        context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-2)
+        context = attn_out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
 
         return self.out_proj(context)
