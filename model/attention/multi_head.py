@@ -55,6 +55,8 @@ class MultiHeadAttention(nn.Module):
             )
 
         self.d_head = self.d_model // self.n_heads
+        self.use_rotary = getattr(cfg, "use_rotary", False)
+        self.rotary = RotaryEmbedding(self.d_head, getattr(cfg, "max_seq_len", 2048)) if self.use_rotary else None
 
         self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
@@ -94,6 +96,16 @@ class MultiHeadAttention(nn.Module):
         q = q.view(batch_size, query_len, self.n_heads, self.d_head).transpose(1, 2)
         k = k.view(batch_size, query_len, self.n_heads, self.d_head).transpose(1, 2)
         v = v.view(batch_size, query_len, self.n_heads, self.d_head).transpose(1, 2)
+
+        if kv_cache is not None and layer_idx is not None:
+            past_len = kv_cache.get_seq_length(layer_idx)
+        else:
+            past_len = 0
+
+        if self.rotary is not None:
+            cos, sin = self.rotary(q, past_len + query_len)
+            q_cos, q_sin = cos[..., past_len:, :], sin[..., past_len:, :]
+            q, k = apply_rotary_pos_emb(q, k, q_cos, q_sin)
 
         if kv_cache is not None and layer_idx is not None:
             k, v = kv_cache.update(layer_idx, k, v)

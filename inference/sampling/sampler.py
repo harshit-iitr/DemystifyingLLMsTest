@@ -45,6 +45,9 @@ class Sampler:
         if self.top_p < 1.0:
             logits = apply_top_p(logits, p=self.top_p)
 
+        if self.temperature == 0:
+            return torch.argmax(logits, dim=-1)
+
         # 4. Temperature
         if self.temperature != 1.0:
             # Note: apply_temperature may return probs or scaled logits depending on bugs

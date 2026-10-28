@@ -22,13 +22,19 @@ class FullTransformerModel(nn.Module):
         from model.embeddings import EmbeddingLayer
         from model.blocks import BlockStack
         from model.heads import LMHead
+        from model.heads.weight_tying import tie_weights
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
+        self.num_layers = config.n_layers
         self.lm_head = LMHead(config=config)
+        if config.tie_weights:
+            tie_weights(self.lm_head, self.embeddings.token_embedding)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        cache = kwargs.get("kv_cache")
+        offset = cache.get_seq_length(0) if cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
         h = self.blocks(h, **kwargs)
         logits = self.lm_head(h)
         return logits
@@ -69,7 +75,7 @@ class InferenceEngine:
         Internal lifecycle helper to prepare model state before inference execution.
         """
         if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+            self.model.eval()
 
     def generate_tokens(
         self,
@@ -99,6 +105,8 @@ class InferenceEngine:
                 if self.model is not None and callable(self.model):
                     try:
                         logits = self.model(input_tensor)
+                        if isinstance(logits, tuple):
+                            logits = logits[0]
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
                         if temp > 0:
@@ -108,10 +116,10 @@ class InferenceEngine:
                             next_token = torch.argmax(next_token_logits, dim=-1).item()
                     except Exception:
                         self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                        raise
                 else:
                     self._failed = True
-                    next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    raise RuntimeError("No model is available for token generation")
 
                 tokens.append(int(next_token))
 
@@ -157,5 +165,6 @@ class InferenceEngine:
                 pass
 
         # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation
+        if tokenizer is not None and hasattr(tokenizer, "decode"):
+            return tokenizer.decode(output_ids)
+        return prompt

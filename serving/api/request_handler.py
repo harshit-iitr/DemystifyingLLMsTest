@@ -32,6 +32,7 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        response_text = None
 
         # Tokenize prompt
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
@@ -48,11 +49,14 @@ class RequestHandler:
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            generated_tokens = prompt_tokens
+            response_text = raw_gen
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            generated_tokens = prompt_tokens
+            response_text = prompt
 
-        response_text = generated_tokens
+        if response_text is None:
+            response_text = (self.tokenizer.decode(generated_tokens) if self.tokenizer is not None and hasattr(self.tokenizer, "decode") else str(generated_tokens))
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,7 +68,7 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                "finish_reason": "stop" if generated_tokens and generated_tokens[-1] in getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", []) else "length"
                 }
             ],
             "usage": {

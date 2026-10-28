@@ -37,12 +37,24 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
-
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        merge_ranks = {pair: rank for rank, pair in enumerate(self.merges)}
+        while len(pieces) > 1:
+            stats = self._get_stats(pieces)
+            candidates = [pair for pair in stats if pair in merge_ranks]
+            if not candidates:
                 break
-            pieces = self._merge_word(pieces, pair)
+            pair = min(candidates, key=merge_ranks.__getitem__)
+            # Apply a selected merge to every matching adjacent pair.
+            merged = []
+            i = 0
+            while i < len(pieces):
+                if i + 1 < len(pieces) and (pieces[i], pieces[i + 1]) == pair:
+                    merged.append(pieces[i] + pieces[i + 1])
+                    i += 2
+                else:
+                    merged.append(pieces[i])
+                    i += 1
+            pieces = merged
 
         return pieces
 

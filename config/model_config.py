@@ -8,7 +8,7 @@ class ModelConfig:
     d_model: int = 768
     n_heads: int = 12
     n_layers: int = 12
-    vocab_size: int = 50256
+    vocab_size: int = 50257
     max_seq_len: int = 1024
     ffn_multiplier: int = 4
     dropout: float = 0.1
