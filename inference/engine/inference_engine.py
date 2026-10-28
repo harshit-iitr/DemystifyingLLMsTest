@@ -9,7 +9,8 @@ import torch.nn as nn
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from utils.logging_utils import get_logger
-from inference.sampling.sampler import Sampler
+from inference.sampling.top_k import apply_top_k
+from inference.sampling.top_p import apply_top_p
 
 logger = get_logger("inference_engine")
 
@@ -98,17 +99,9 @@ class InferenceEngine:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
-        sampler = Sampler(
-            temperature=temp,
-            top_k=top_k if top_k is not None else self.inference_config.top_k,
-            top_p=top_p if top_p is not None else self.inference_config.top_p,
-            repetition_penalty=self.inference_config.repetition_penalty,
-        )
-        if self.inference_config.seed is not None:
-            torch.manual_seed(self.inference_config.seed)
-
         tokens = list(prompt_tokens)
-        max_context = getattr(self.model_config, "max_seq_len", None)
+        model_cfg = getattr(self.model, "config", None) or self.model_config
+        max_context = getattr(model_cfg, "max_seq_len", None)
 
         with torch.no_grad():
             for _ in range(max_tokens):
@@ -120,7 +113,17 @@ class InferenceEngine:
                     if isinstance(logits, tuple):
                         logits = logits[0]
                     next_token_logits = logits[:, -1, :]
-                    next_token = sampler.sample(next_token_logits, generated_tokens=tokens).item()
+
+                    if temp > 0:
+                        next_token_logits = next_token_logits / temp
+                        if top_k is not None:
+                            next_token_logits = apply_top_k(next_token_logits, k=top_k)
+                        if top_p is not None:
+                            next_token_logits = apply_top_p(next_token_logits, p=top_p)
+                        probs = torch.softmax(next_token_logits, dim=-1)
+                        next_token = torch.multinomial(probs, num_samples=1).item()
+                    else:
+                        next_token = torch.argmax(next_token_logits, dim=-1).item()
                 else:
                     self._failed = True
                     break

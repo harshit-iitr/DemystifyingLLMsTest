@@ -37,24 +37,23 @@ class Sampler:
         if self.repetition_penalty != 1.0 and generated_tokens is not None:
             logits = apply_repetition_penalty(logits, generated_tokens, penalty=self.repetition_penalty)
 
-        # 2. Greedy decoding
         if self.temperature <= 0.0:
             return torch.argmax(logits, dim=-1)
 
-        # 3. Temperature
-        if self.temperature != 1.0:
-            logits = apply_temperature(logits, temperature=self.temperature)
-
-        # 4. Top-K
+        # 2. Top-K
         if self.top_k > 0:
             logits = apply_top_k(logits, k=self.top_k)
 
-        # 5. Top-P
+        # 3. Top-P
         if self.top_p < 1.0:
             logits = apply_top_p(logits, p=self.top_p)
 
+        # 4. Temperature
+        if self.temperature != 1.0:
+            logits = apply_temperature(logits, temperature=self.temperature)
+
         probs = F.softmax(logits, dim=-1)
 
-        # 6. Multinomial sample
+        # 5. Multinomial sample
         next_token = torch.multinomial(probs, num_samples=1)
         return next_token.squeeze(-1)

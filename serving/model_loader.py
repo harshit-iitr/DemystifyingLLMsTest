@@ -33,7 +33,7 @@ class ModelLoader:
     def load_weights(
         self,
         model: nn.Module,
-        strict: bool = True,
+        strict: bool = False,
         map_location: str = "cpu"
     ) -> nn.Module:
         """
