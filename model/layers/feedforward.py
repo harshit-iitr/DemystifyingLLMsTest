@@ -49,7 +49,7 @@ class FeedForward(nn.Module):
         if d_ffn is not None:
             self.d_ffn = d_ffn
         else:
-            self.d_ffn = self.d_model * 2
+            self.d_ffn = self.d_model * 4
 
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
