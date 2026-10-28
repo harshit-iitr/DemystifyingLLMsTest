@@ -46,6 +46,8 @@ class BatchProcessor:
             return empty, empty
 
         padding_side = side or self.default_side
+        if padding_side not in ("left", "right"):
+            raise ValueError(f"Invalid padding side '{padding_side}', must be 'left' or 'right'")
         batch_size = len(token_lists)
         max_len = max(len(s) for s in token_lists)
 
@@ -63,8 +65,6 @@ class BatchProcessor:
             elif padding_side == "right":
                 padded_tensor[i, :seq_len] = seq_t
                 attention_mask[i, :seq_len] = 1
-            else:
-                raise ValueError(f"Invalid padding side '{padding_side}', must be 'left' or 'right'")
 
         return padded_tensor, attention_mask
 
@@ -92,6 +92,8 @@ class BatchProcessor:
         chunk_size: int
     ) -> List[torch.Tensor]:
         """Split a large batch tensor into smaller micro-batch chunks."""
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
         return list(torch.split(tensor, chunk_size, dim=0))
 
 
@@ -107,6 +109,10 @@ class DynamicBatcher:
         max_wait_ms: float = 20.0,
         pad_id: int = 0
     ):
+        if max_batch_size <= 0:
+            raise ValueError(f"max_batch_size must be positive, got {max_batch_size}")
+        if max_wait_ms < 0:
+            raise ValueError(f"max_wait_ms must be non-negative, got {max_wait_ms}")
         self.max_batch_size = max_batch_size
         self.max_wait_ms = max_wait_ms
         self.processor = BatchProcessor(pad_id=pad_id, default_side="left")

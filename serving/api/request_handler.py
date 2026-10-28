@@ -40,19 +40,34 @@ class RequestHandler:
             prompt_tokens = [ord(c) for c in prompt]
 
         # Generate continuation
+        completion_text = ""
+        generated_tokens = list(prompt_tokens)
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                top_k=request_body.get("top_k"),
+                top_p=request_body.get("top_p"),
             )
+            completion_tokens = generated_tokens[len(prompt_tokens):]
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                completion_text = self.tokenizer.decode(completion_tokens)
+            else:
+                completion_text = " ".join(str(token_id) for token_id in completion_tokens)
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
-        else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            generated_text = self.engine.generate(
+                prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens
+            )
+            completion_text = generated_text[len(prompt):] if generated_text.startswith(prompt) else generated_text
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                try:
+                    completion_tokens = self.tokenizer.encode(completion_text, add_bos=False)
+                    generated_tokens += completion_tokens
+                except TypeError:
+                    pass
 
-        response_text = generated_tokens
+        response_text = completion_text
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
