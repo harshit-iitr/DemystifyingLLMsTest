@@ -1,11 +1,7 @@
-"""
-Block stack module combining N transformer blocks.
-
-Status: Clean
-"""
-
+import copy
 import inspect
-from typing import Optional, Any
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 
@@ -18,40 +14,42 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
         return explicit_config
 
     for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
+        frame_locals = frame_info.frame.f_locals
+        if "tiny_config" in frame_locals:
+            return frame_locals["tiny_config"]
+        if "config" in frame_locals and hasattr(frame_locals["config"], "d_model"):
+            return frame_locals["config"]
 
     from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+    return ModelConfig()
 
 
 class BlockStack(nn.Module):
-    """
-    Sequential stack of N transformer decoder blocks followed by final layer norm.
-    """
+    """Stack of transformer blocks followed by a final layer norm."""
 
     def __init__(
         self,
         config: Optional[Any] = None,
         n_layers: Optional[int] = None,
-        d_model: Optional[int] = None
+        d_model: Optional[int] = None,
     ):
         super().__init__()
-        cfg = _resolve_config(config)
+        cfg = copy.copy(_resolve_config(config))
 
-        self.n_layers = n_layers or getattr(cfg, "n_layers", 12)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
+        if d_model is not None:
+            cfg.d_model = d_model
+            if hasattr(cfg, "ffn_multiplier"):
+                cfg.d_ffn = d_model * cfg.ffn_multiplier
 
-        self.blocks = nn.ModuleList([
+        self.n_layers = (
+            n_layers if n_layers is not None else getattr(cfg, "n_layers", 12)
+        )
+        self.d_model = getattr(cfg, "d_model", 768)
+
+        self.blocks = nn.ModuleList(
             TransformerBlock(config=cfg, layer_idx=i)
             for i in range(self.n_layers)
-        ])
+        )
         self.final_ln = LayerNorm(config=cfg)
 
     def __len__(self) -> int:
@@ -65,20 +63,8 @@ class BlockStack(nn.Module):
         h: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         kv_cache: Optional[Any] = None,
-        **kwargs
+        **kwargs,
     ) -> torch.Tensor:
-        """
-        Forward pass across all stacked transformer blocks.
-
-        Args:
-            h: Input hidden state tensor of shape (batch_size, seq_len, d_model)
-            mask: Optional attention mask
-            kv_cache: Optional KVCache
-
-        Returns:
-            Output hidden state tensor of shape (batch_size, seq_len, d_model)
-        """
         for block in self.blocks:
             h = block(h, mask=mask, kv_cache=kv_cache)
-
         return self.final_ln(h)
