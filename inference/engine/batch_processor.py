@@ -46,6 +46,8 @@ class BatchProcessor:
             return empty, empty
 
         padding_side = side or self.default_side
+        if padding_side not in ("left", "right"):
+            raise ValueError(f"Invalid padding side '{padding_side}', must be 'left' or 'right'")
         batch_size = len(token_lists)
         max_len = max(len(s) for s in token_lists)
 
@@ -63,8 +65,6 @@ class BatchProcessor:
             elif padding_side == "right":
                 padded_tensor[i, :seq_len] = seq_t
                 attention_mask[i, :seq_len] = 1
-            else:
-                raise ValueError(f"Invalid padding side '{padding_side}', must be 'left' or 'right'")
 
         return padded_tensor, attention_mask
 

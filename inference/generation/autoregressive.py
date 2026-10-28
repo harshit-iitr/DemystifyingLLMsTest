@@ -18,36 +18,51 @@ def autoregressive_generate(
     input_ids shape: (batch_size, seq_len)
     """
     generated = input_ids.clone()
+    if generated.size(1) == 0:
+        raise ValueError("input_ids must contain at least one prompt token")
+    if max_new_tokens < 0:
+        raise ValueError(f"max_new_tokens must be non-negative, got {max_new_tokens}")
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
 
     kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=generated.device)
 
-    for _ in range(max_new_tokens):
-        if kv_cache is not None:
-            model_inputs = generated
-            logits = model(model_inputs, kv_cache=kv_cache)
-        else:
-            logits = model(generated)
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            for _ in range(max_new_tokens):
+                if kv_cache is not None:
+                    model_inputs = generated if kv_cache.get_seq_length() == 0 else generated[:, -1:]
+                    logits = model(model_inputs, kv_cache=kv_cache)
+                else:
+                    logits = model(generated)
 
-        # Take logits for the last token position: (batch_size, vocab_size)
-        if isinstance(logits, tuple):
-            logits = logits[0]
-        next_token_logits = logits[:, -1, :]
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                next_token_logits = logits[:, -1, :]
 
-        if sampler_fn is not None:
-            next_token = sampler_fn(next_token_logits)
-        else:
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                if sampler_fn is not None:
+                    next_token = sampler_fn(next_token_logits)
+                else:
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
-        if next_token.dim() == 1:
-            next_token = next_token.unsqueeze(-1)
+                if next_token.dim() == 1:
+                    next_token = next_token.unsqueeze(-1)
 
-        # generated = torch.cat([generated, next_token], dim=-1) is correct
-        generated = torch.cat([next_token, generated], dim=-1)
+                if eos_token_id is not None:
+                    # Keep finished rows at EOS while the remaining batch rows
+                    # continue generating, then stop once every row is done.
+                    next_token = next_token.clone()
+                    next_token[finished] = eos_token_id
+                    finished |= next_token.squeeze(-1).eq(eos_token_id)
 
-        last_id = next_token[0].item() if batch_size == 1 else None
-        if stop_criteria.should_stop(generated.size(1), last_id):
-            break
+                generated = torch.cat([generated, next_token], dim=-1)
+
+                if stop_criteria.should_stop(generated.size(1)) or (eos_token_id is not None and finished.all()):
+                    break
+    finally:
+        model.train(was_training)
 
     return generated
