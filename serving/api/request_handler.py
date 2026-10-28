@@ -37,7 +37,7 @@ class RequestHandler:
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
             prompt_tokens = self.tokenizer.encode(prompt)
         else:
-            prompt_tokens = [ord(c) for c in prompt]
+            prompt_tokens = list(prompt.encode("utf-8"))
 
         # Generate continuation
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
@@ -47,12 +47,25 @@ class RequestHandler:
                 temperature=temperature
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            full_text = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens, temperature=temperature)
+            response_text = full_text[len(prompt):] if isinstance(full_text, str) and full_text.startswith(prompt) else full_text
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                try:
+                    continuation_tokens = self.tokenizer.encode(response_text, add_bos=False)
+                except TypeError:
+                    continuation_tokens = self.tokenizer.encode(response_text)
+            else:
+                continuation_tokens = list(response_text.encode("utf-8")) if isinstance(response_text, str) else []
+            generated_tokens = prompt_tokens + continuation_tokens
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("An inference engine is required to handle completion requests")
 
-        response_text = generated_tokens
+        if self.engine is not None and hasattr(self.engine, "generate_tokens"):
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                response_text = self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+            else:
+                response_text = bytes(token for token in generated_tokens[len(prompt_tokens):] if 0 <= token <= 255).decode("utf-8", errors="replace")
+        completion_count = max(0, len(generated_tokens) - len(prompt_tokens))
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -69,8 +82,8 @@ class RequestHandler:
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_count,
+                "total_tokens": len(prompt_tokens) + completion_count
             }
         }
 

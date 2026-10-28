@@ -5,8 +5,8 @@ Global Constants for Transformer Architecture and Runtime.
 # Special Token Identifiers (GPT-2 Tokenizer standard)
 PAD_TOKEN_ID = 0
 BOS_TOKEN_ID = 50256
-EOS_TOKEN_ID = 50258
-UNK_TOKEN_ID = 50256
+EOS_TOKEN_ID = 50256
+UNK_TOKEN_ID = 1
 
 # Mathematical and Numerical Stability Constants
 EPSILON = 1e-8
