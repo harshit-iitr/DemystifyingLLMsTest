@@ -35,16 +35,12 @@ def scaled_dot_product_attention(
     """
     d_k = q.size(-1)
 
-    # Compute raw query-key dot products: (batch, n_heads, seq_len_q, seq_len_k)
-    scores = torch.matmul(q, k.transpose(-2, -1))
-
-    # scores = scores / math.sqrt(d_k)
+    scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
 
     if mask is not None:
         scores = scores + mask
 
-    # attn_weights = F.softmax(scores, dim=-1)
-    attn_weights = F.softmax(scores, dim=-2)
+    attn_weights = F.softmax(scores, dim=-1)
 
     if dropout is not None:
         attn_weights = dropout(attn_weights)
