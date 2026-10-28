@@ -48,6 +48,10 @@ class SinusoidalPositionEmbedding(nn.Module):
         Returns:
             Tensor of shape (1, seq_len, d_model).
         """
+        if not isinstance(seq_len, int) or isinstance(seq_len, bool) or seq_len < 0:
+            raise ValueError(f"seq_len must be a non-negative integer, got {seq_len}")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise ValueError(f"offset must be a non-negative integer, got {offset}")
         if offset + seq_len > self.max_seq_len:
             raise ValueError(
                 f"Requested position index {offset + seq_len} exceeds max_seq_len {self.max_seq_len}"
@@ -77,6 +81,14 @@ class LearnedPositionEmbedding(nn.Module):
         offset: int = 0,
         device: Optional[torch.device] = None
     ) -> torch.Tensor:
+        if not isinstance(seq_len, int) or isinstance(seq_len, bool) or seq_len < 0:
+            raise ValueError(f"seq_len must be a non-negative integer, got {seq_len}")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise ValueError(f"offset must be a non-negative integer, got {offset}")
+        if offset + seq_len > self.max_seq_len:
+            raise ValueError(
+                f"Requested position index {offset + seq_len} exceeds max_seq_len {self.max_seq_len}"
+            )
         positions = torch.arange(offset, offset + seq_len, dtype=torch.long)
         if device is not None:
             positions = positions.to(device)
