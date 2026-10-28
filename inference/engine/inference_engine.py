@@ -24,7 +24,7 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -64,12 +64,14 @@ class InferenceEngine:
                 logger.debug(f"Could not build FullTransformerModel: {e}")
                 self.model = None
 
+        self._failed = False
+
     def _prepare_model(self) -> None:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None and hasattr(self.model, "eval"):
+            self.model.eval()
 
     def generate_tokens(
         self,
@@ -83,6 +85,7 @@ class InferenceEngine:
         Generate a list of token IDs autoregressively from input token sequence.
         """
         self._prepare_model()
+        self._failed = False
 
         max_tokens = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
         if max_tokens <= 0:
@@ -99,6 +102,8 @@ class InferenceEngine:
                 if self.model is not None and callable(self.model):
                     try:
                         logits = self.model(input_tensor)
+                        if isinstance(logits, tuple):
+                            logits = logits[0]
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
                         if temp > 0:

@@ -11,13 +11,16 @@ def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
         return logits
 
     probs = F.softmax(logits, dim=-1)
-    cumulative_probs = torch.cumsum(probs, dim=-1)
+    sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
     remove_mask = cumulative_probs > p
-    # Shift right to keep the first token that exceeds p
-    remove_mask = torch.roll(remove_mask, 1, dims=-1)
+    remove_mask[..., 1:] = remove_mask[..., :-1].clone()
     remove_mask[..., 0] = False
 
+    original_mask = torch.zeros_like(logits, dtype=torch.bool)
+    original_mask.scatter_(-1, sorted_indices, remove_mask)
+
     filtered_logits = logits.clone()
-    filtered_logits[remove_mask] = float("-inf")
+    filtered_logits.masked_fill_(original_mask, float("-inf"))
     return filtered_logits
