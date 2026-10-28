@@ -89,10 +89,7 @@ class ServingPipeline:
         else:
             try:
                 parameters = inspect.signature(model_forward).parameters.values()
-                use_cache = use_cache and any(
-                    parameter.name == "kv_cache" or parameter.kind == inspect.Parameter.VAR_KEYWORD
-                    for parameter in parameters
-                )
+                use_cache = use_cache and any(parameter.name == "kv_cache" for parameter in parameters)
             except (TypeError, ValueError):
                 use_cache = False
 
