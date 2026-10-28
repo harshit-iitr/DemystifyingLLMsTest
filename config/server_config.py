@@ -20,6 +20,16 @@ class ServerConfig:
     cors_allowed_origins: List[str] = field(default_factory=lambda: ["*"])
     keep_alive_timeout: int = 5
 
+    def __post_init__(self) -> None:
+        if not 0 <= self.port <= 65535:
+            raise ValueError("port must be between 0 and 65535")
+        if self.timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if self.max_batch_size <= 0 or self.max_queue_size <= 0:
+            raise ValueError("max_batch_size and max_queue_size must be positive")
+        if self.keep_alive_timeout < 0:
+            raise ValueError("keep_alive_timeout must be non-negative")
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
         return asdict(self)

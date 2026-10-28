@@ -32,6 +32,12 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or temperature < 0:
+            raise ValueError("temperature must be a non-negative number")
 
         # Tokenize prompt
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):

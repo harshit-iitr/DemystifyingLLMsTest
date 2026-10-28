@@ -5,7 +5,6 @@ Multi-Head Attention module.
   - H10: Q, K, V projection matrices are all initialized from the SAME linear layer (shared weights)
 """
 
-import inspect
 from typing import Optional, Any, Tuple
 import torch
 import torch.nn as nn
@@ -19,18 +18,8 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
     if explicit_config is not None:
         return explicit_config
 
-    for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
-
     from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+    return ModelConfig()
 
 
 class MultiHeadAttention(nn.Module):
@@ -111,10 +100,10 @@ class MultiHeadAttention(nn.Module):
         q = q.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         k = k.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
+        past_len = kv_cache.get_seq_length(layer_idx) if kv_cache is not None and layer_idx is not None else 0
 
         if self.rotary_emb is not None:
-            offset = kv_cache.get_seq_length(layer_idx) if kv_cache is not None and layer_idx is not None else 0
-            cos, sin = self.rotary_emb(q, seq_len=seq_len, offset=offset)
+            cos, sin = self.rotary_emb(q, seq_len=seq_len, offset=past_len)
             q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # 3. Update KV cache if provided
@@ -122,8 +111,14 @@ class MultiHeadAttention(nn.Module):
             k, v = kv_cache.update(layer_idx, k, v)
 
         # 4. Prepare causal mask if needed
-        if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+        if mask is None and use_causal_mask:
+            mask = create_causal_mask(
+                seq_len=seq_len,
+                device=x.device,
+                dtype=x.dtype,
+                past_len=past_len,
+                key_len=past_len + seq_len,
+            )
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(

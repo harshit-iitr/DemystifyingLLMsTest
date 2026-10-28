@@ -17,26 +17,39 @@ from utils.logging_utils import get_logger
 logger = get_logger("server")
 
 
-def create_handler_class(router: RouteHandler):
+def create_handler_class(router: RouteHandler, cors_allowed_origins: Optional[list] = None):
     """Factory to create a BaseHTTPRequestHandler bound to a specific RouteHandler."""
+    allowed_origins = cors_allowed_origins if cors_allowed_origins is not None else ["*"]
 
     class TransformerHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+        def _allowed_origin(self):
+            origin = self.headers.get("Origin")
+            if "*" in allowed_origins:
+                return "*"
+            return origin if origin in allowed_origins else None
+
         def _send_json_response(self, status_code: int, data: dict):
             payload = json.dumps(data).encode("utf-8")
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            origin = self._allowed_origin()
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
             self.wfile.write(payload)
 
         def do_OPTIONS(self):
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            origin = self._allowed_origin()
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
 
         def do_GET(self):
@@ -83,7 +96,7 @@ class TransformerServer:
 
     def start(self, background: bool = False) -> None:
         """Start the HTTP server on configured host and port."""
-        handler_cls = create_handler_class(self.route_handler)
+        handler_cls = create_handler_class(self.route_handler, self.config.cors_allowed_origins)
         self._server = http.server.ThreadingHTTPServer((self.config.host, self.config.port), handler_cls)
         logger.info(f"Starting stdlib HTTP server at http://{self.config.host}:{self.config.port}")
 

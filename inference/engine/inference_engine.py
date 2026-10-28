@@ -97,6 +97,12 @@ class InferenceEngine:
         temp = temperature if temperature is not None else self.inference_config.temperature
         if temp < 0:
             raise ValueError("temperature must be non-negative")
+        selected_top_k = self.inference_config.top_k if top_k is None else top_k
+        selected_top_p = self.inference_config.top_p if top_p is None else top_p
+        if selected_top_k < 0:
+            raise ValueError("top_k must be non-negative")
+        if not 0.0 <= selected_top_p <= 1.0:
+            raise ValueError("top_p must be in [0.0, 1.0]")
         tokens = list(prompt_tokens)
         if not tokens:
             tokens = [BOS_TOKEN_ID]
@@ -112,8 +118,8 @@ class InferenceEngine:
             cache = KVCache(num_layers=num_layers)
         sampler = Sampler(
             temperature=max(temp, torch.finfo(torch.float32).tiny),
-            top_k=self.inference_config.top_k if top_k is None else top_k,
-            top_p=self.inference_config.top_p if top_p is None else top_p,
+            top_k=selected_top_k,
+            top_p=selected_top_p,
             repetition_penalty=self.inference_config.repetition_penalty,
         )
         generator = None

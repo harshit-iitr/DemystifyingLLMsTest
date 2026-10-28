@@ -29,6 +29,10 @@ class ModelConfig:
             raise ValueError("n_heads and n_layers must be positive")
         if self.d_model <= 0 or self.ffn_multiplier <= 0 or self.vocab_size <= 0:
             raise ValueError("d_model, ffn_multiplier, and vocab_size must be positive")
+        if self.max_seq_len <= 0 or self.layer_norm_eps <= 0 or self.initializer_range <= 0:
+            raise ValueError("max_seq_len, layer_norm_eps, and initializer_range must be positive")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must be in [0.0, 1.0)")
         if self.d_model % self.n_heads != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"
