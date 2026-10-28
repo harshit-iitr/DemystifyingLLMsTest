@@ -15,7 +15,7 @@ NEG_INF = -1e9
 
 # Model Hyperparameter Bounds & Defaults
 MIN_SEQ_LEN = 1
-MAX_SEQ_LEN = 2048
+MAX_SEQ_LEN = 1024
 DEFAULT_D_MODEL = 768
 DEFAULT_N_HEADS = 12
 DEFAULT_N_LAYERS = 12
