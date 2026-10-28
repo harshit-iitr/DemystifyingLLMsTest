@@ -24,10 +24,13 @@ class FullTransformerModel(nn.Module):
         from model.embeddings import EmbeddingLayer
         from model.blocks import BlockStack
         from model.heads import LMHead
+        from model.heads.weight_tying import tie_weights
 
         self.embeddings = EmbeddingLayer(config=config)
         self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        if config.tie_weights:
+            tie_weights(self.lm_head, self.embeddings.token_embedding)
 
     def forward(self, input_ids: torch.Tensor, kv_cache: Optional[Any] = None, **kwargs) -> torch.Tensor:
         offset = kv_cache.get_seq_length(0) if kv_cache is not None else 0
