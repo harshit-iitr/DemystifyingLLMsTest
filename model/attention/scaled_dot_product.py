@@ -38,13 +38,16 @@ def scaled_dot_product_attention(
     # Compute raw query-key dot products: (batch, n_heads, seq_len_q, seq_len_k)
     scores = torch.matmul(q, k.transpose(-2, -1))
 
-    # scores = scores / math.sqrt(d_k)
+    scores = scores / math.sqrt(d_k)
 
     if mask is not None:
         scores = scores + mask
 
     # attn_weights = F.softmax(scores, dim=-1)
-    attn_weights = F.softmax(scores, dim=-2)
+    attn_weights = F.softmax(scores, dim=-1)
+    # Padding can leave a query with no visible keys. Softmax over an all-
+    # negative-infinity row is undefined; make those rows contribute zero.
+    attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
 
     if dropout is not None:
         attn_weights = dropout(attn_weights)

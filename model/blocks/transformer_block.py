@@ -11,7 +11,6 @@ import torch.nn as nn
 from model.attention.multi_head import MultiHeadAttention
 from model.layers.feedforward import FeedForward
 from model.layers.layer_norm import LayerNorm
-from model.layers.residual import ResidualConnection
 
 
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
@@ -50,11 +49,20 @@ class TransformerBlock(nn.Module):
         self.ln1 = LayerNorm(config=cfg)
         self.attn = MultiHeadAttention(config=cfg)
         self.ln2 = LayerNorm(config=cfg)
+        # Keep the original registered name so existing checkpoints load.
         self.ffn = FeedForward(config=cfg)
 
         dropout_p = getattr(cfg, "dropout", 0.1)
-        self.resid1 = ResidualConnection(dropout=dropout_p)
-        self.resid2 = ResidualConnection(dropout=dropout_p)
+        self.dropout = nn.Dropout(p=dropout_p)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Accept the conventional MLP name while storing it under the
+        # checkpoint-compatible ``ffn`` module key.
+        super().__setattr__("ffn" if name == "mlp" else name, value)
+
+    @property
+    def mlp(self) -> FeedForward:
+        return self.ffn
 
     def forward(
         self,
@@ -73,8 +81,16 @@ class TransformerBlock(nn.Module):
         Returns:
             Output tensor of shape (batch_size, seq_len, d_model)
         """
-        # h = self.resid1(x, self.attn(self.ln1(x), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
-        # out = self.resid2(h, self.ffn(self.ln2(h)))
-        h = self.resid1(x, self.ffn(self.ln1(x)))
-        out = self.resid2(h, self.attn(self.ln2(h), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
-        return out
+        norm_x1 = self.ln1(x)
+        if kv_cache is None:
+            attn_out = self.attn(norm_x1, mask=mask)
+        else:
+            attn_out = self.attn(
+                norm_x1, mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx
+            )
+        x = x + self.dropout(attn_out)
+
+        norm_x2 = self.ln2(x)
+        mlp_out = self.mlp(norm_x2)
+        x = x + self.dropout(mlp_out)
+        return x

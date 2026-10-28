@@ -6,8 +6,9 @@ from .vocab import Vocabulary
 class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
         self.vocab = vocab or Vocabulary()
-        self.merges: List[Tuple[str, str]] = merges or []
-        self.vocab_size = 50257
+        self.merges: List[Tuple[str, str]] = list(merges or [])
+        self._merge_ranks = {pair: rank for rank, pair in enumerate(self.merges)}
+        self.vocab_size = max(self.vocab._id_to_token, default=-1) + 1
 
     def _get_stats(self, pieces: List[str]) -> Dict[Tuple[str, str], int]:
         pairs: Dict[Tuple[str, str], int] = {}
@@ -19,12 +20,10 @@ class BPETokenizer:
     def _merge_word(self, pieces: List[str], pair: Tuple[str, str]) -> List[str]:
         new_pieces = []
         i = 0
-        merged = False
         while i < len(pieces):
-            if not merged and i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
+            if i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
                 new_pieces.append(pair[0] + pair[1])
                 i += 2
-                merged = True
             else:
                 new_pieces.append(pieces[i])
                 i += 1
@@ -37,12 +36,13 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
-
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        while len(pieces) > 1:
+            available = [(self._merge_ranks[pair], pair) for pair in self._get_stats(pieces)
+                         if pair in self._merge_ranks]
+            if not available:
                 break
-            pieces = self._merge_word(pieces, pair)
+            _, best_pair = min(available)
+            pieces = self._merge_word(pieces, best_pair)
 
         return pieces
 
@@ -55,7 +55,9 @@ class BPETokenizer:
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:
         from .encoding import encode
-        return encode(text, tokenizer=self, add_bos=add_bos)
+        token_ids = encode(text, tokenizer=self, add_bos=add_bos)
+        self.vocab_size = max(self.vocab._id_to_token, default=-1) + 1
+        return token_ids
 
     def decode(self, ids: List[int], skip_special_tokens: bool = True) -> str:
         from .decoding import decode

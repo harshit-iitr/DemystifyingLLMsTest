@@ -20,12 +20,13 @@ def create_causal_mask(
       Positions where j <= i should have value 0.0 (allowed).
       Positions where j > i should have value -inf (masked).
 
-    are masked with -inf and future positions (j >= i) are allowed!
+    Future positions are masked with negative infinity.
     """
-    # mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype), diagonal=1)
-    mask = torch.tril(
+    if seq_len < 0:
+        raise ValueError("seq_len must be non-negative")
+    mask = torch.triu(
         torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype),
-        diagonal=-1
+        diagonal=1
     )
     return mask.unsqueeze(0).unsqueeze(0)
 
@@ -45,4 +46,6 @@ class CausalMask(nn.Module):
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32
     ) -> torch.Tensor:
+        if seq_len > self.max_seq_len:
+            raise ValueError(f"seq_len {seq_len} exceeds max_seq_len {self.max_seq_len}")
         return create_causal_mask(seq_len=seq_len, device=device, dtype=dtype)

@@ -92,6 +92,8 @@ class BatchProcessor:
         chunk_size: int
     ) -> List[torch.Tensor]:
         """Split a large batch tensor into smaller micro-batch chunks."""
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
         return list(torch.split(tensor, chunk_size, dim=0))
 
 
@@ -109,6 +111,8 @@ class DynamicBatcher:
     ):
         self.max_batch_size = max_batch_size
         self.max_wait_ms = max_wait_ms
+        if max_batch_size <= 0 or max_wait_ms < 0:
+            raise ValueError("max_batch_size must be positive and max_wait_ms non-negative")
         self.processor = BatchProcessor(pad_id=pad_id, default_side="left")
         self._queue: List[Dict[str, Any]] = []
 

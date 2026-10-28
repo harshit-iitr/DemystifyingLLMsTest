@@ -7,6 +7,7 @@ import torch
 
 from .metrics import calculate_perplexity, cross_entropy_loss, token_accuracy, repetition_rate
 from .benchmarks import benchmark_forward_latency
+from config.constants import PAD_TOKEN_ID
 
 
 class ModelEvaluator:
@@ -30,9 +31,9 @@ class ModelEvaluator:
 
         with torch.no_grad():
             logits = self.model(input_ids)
-            loss = cross_entropy_loss(logits, target_ids).item()
+            loss = cross_entropy_loss(logits, target_ids, ignore_index=PAD_TOKEN_ID).item()
             ppl = calculate_perplexity(loss)
-            acc = token_accuracy(logits, target_ids)
+            acc = token_accuracy(logits[:, :-1, :], target_ids[:, 1:], ignore_index=PAD_TOKEN_ID)
 
         return {
             "loss": round(loss, 4),

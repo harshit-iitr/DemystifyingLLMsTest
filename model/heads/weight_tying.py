@@ -25,9 +25,7 @@ def tie_weights(lm_head: Any, token_embedding: Any) -> None:
     else:
         raise AttributeError("token_embedding does not possess a weight parameter")
 
-    if hasattr(lm_head, "tie_weights"):
-        lm_head.tie_weights(weight)
-    elif hasattr(lm_head, "proj"):
+    if hasattr(lm_head, "proj") and hasattr(lm_head.proj, "weight"):
         lm_head.proj.weight = weight
     elif hasattr(lm_head, "weight"):
         lm_head.weight = weight

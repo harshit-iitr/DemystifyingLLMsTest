@@ -7,6 +7,7 @@ import inspect
 from typing import Optional, Any, Union, List
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
@@ -41,15 +42,17 @@ class LayerNorm(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        if normalized_shape is not None:
-            self.d_model = normalized_shape if isinstance(normalized_shape, int) else normalized_shape[-1]
-        else:
-            self.d_model = getattr(cfg, "d_model", 768)
+        if normalized_shape is None:
+            normalized_shape = getattr(cfg, "d_model", 768)
+        self.normalized_shape = (normalized_shape,) if isinstance(normalized_shape, int) else tuple(normalized_shape)
+        if not self.normalized_shape or any(size <= 0 for size in self.normalized_shape):
+            raise ValueError("normalized_shape must contain positive dimensions")
+        self.d_model = self.normalized_shape[-1]
 
         self.eps = eps if eps is not None else getattr(cfg, "layer_norm_eps", 1e-5)
 
-        self.weight = nn.Parameter(torch.ones(self.d_model))
-        self.bias = nn.Parameter(torch.zeros(self.d_model))
+        self.weight = nn.Parameter(torch.ones(self.normalized_shape))
+        self.bias = nn.Parameter(torch.zeros(self.normalized_shape))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -61,10 +64,4 @@ class LayerNorm(nn.Module):
         Returns:
             Normalized tensor of same shape.
         """
-        # mean = x.mean(dim=-1, keepdim=True)
-        # var = x.var(dim=-1, keepdim=True, unbiased=False)
-        mean = x.mean(dim=0, keepdim=True)
-        var = x.var(dim=0, keepdim=True, unbiased=False)
-
-        x_norm = (x - mean) / torch.sqrt(var + self.eps)
-        return self.weight * x_norm + self.bias
+        return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)

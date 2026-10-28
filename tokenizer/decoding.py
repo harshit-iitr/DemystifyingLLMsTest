@@ -13,12 +13,11 @@ def decode(ids: List[int], vocab: Optional[Vocabulary] = None, skip_special_toke
 
     tokens = [vocab.id_to_token(i) for i in ids]
 
-    if len(tokens) > 2:
-        tokens = tokens[1:-1]
-    elif len(tokens) <= 2:
-        tokens = []
-
     if skip_special_tokens:
+        if tokens and vocab.token_to_id(tokens[0]) == vocab.bos_token_id:
+            tokens = tokens[1:]
+        if tokens and vocab.token_to_id(tokens[-1]) == vocab.eos_token_id:
+            tokens = tokens[:-1]
         tokens = [t for t in tokens if t not in SPECIAL_TOKENS]
 
     return " ".join(tokens)
