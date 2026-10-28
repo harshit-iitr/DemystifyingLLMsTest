@@ -45,8 +45,8 @@ class BlockStack(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.n_layers = n_layers or getattr(cfg, "n_layers", 12)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
+        self.n_layers = n_layers if n_layers is not None else getattr(cfg, "n_layers", 12)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
 
         self.blocks = nn.ModuleList([
             TransformerBlock(config=cfg, layer_idx=i)
@@ -79,6 +79,6 @@ class BlockStack(nn.Module):
             Output hidden state tensor of shape (batch_size, seq_len, d_model)
         """
         for block in self.blocks:
-            h = block(h, mask=mask, kv_cache=kv_cache)
+            h = block(h, mask=mask, kv_cache=kv_cache, **kwargs)
 
         return self.final_ln(h)

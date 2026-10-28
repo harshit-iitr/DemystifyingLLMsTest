@@ -54,6 +54,7 @@ class EmbeddingLayer(nn.Module):
         self.vocab_size = vocab_size or getattr(cfg, "vocab_size", 50257)
         self.d_model = d_model or getattr(cfg, "d_model", 768)
         self.max_seq_len = max_seq_len or getattr(cfg, "max_seq_len", 1024)
+        self.use_rotary = getattr(cfg, "use_rotary", False)
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
         self.token_embedding = TokenEmbedding(
@@ -92,10 +93,17 @@ class EmbeddingLayer(nn.Module):
         if not isinstance(input_ids, torch.Tensor):
             raise TypeError(f"EmbeddingLayer expected torch.Tensor, got {type(input_ids)}")
 
+        was_1d = input_ids.dim() == 1
+        if was_1d:
+            input_ids = input_ids.unsqueeze(0)
+
         batch_size, seq_len = input_ids.shape
         tok_emb = self.token_embedding(input_ids)
-        pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
+        if self.use_rotary:
+            embeddings = tok_emb
+        else:
+            pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
+            embeddings = tok_emb + pos_emb
 
-        embeddings = tok_emb * pos_emb
-
-        return self.dropout(embeddings)
+        out = self.dropout(embeddings)
+        return out.squeeze(0) if was_1d else out

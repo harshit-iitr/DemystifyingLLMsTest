@@ -50,13 +50,27 @@ class ServingPipeline:
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
             tokens = self.tokenizer.encode(text)
         else:
-            tokens = [ord(c) for c in text]
+            vocab_sz = getattr(self.config, "vocab_size", 50257)
+            tokens = [ord(c) % vocab_sz for c in text]
 
-        input_ids = tokens
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
         # Step 2: Model Forward Execution
         if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
+            from inference.engine import InferenceEngine
+            engine = InferenceEngine(
+                model=self.model,
+                model_config=self.config,
+                inference_config=self.inference_config,
+                device=self.device,
+            )
+            generated = engine.generate_tokens(
+                tokens,
+                max_new_tokens=max_new_tokens,
+            )
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                return self.tokenizer.decode(generated)
+            return "".join(chr(token) for token in generated if 0 <= token < 0x110000)
         else:
             output = None
 

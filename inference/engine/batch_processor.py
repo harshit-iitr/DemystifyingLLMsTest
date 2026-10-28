@@ -46,6 +46,8 @@ class BatchProcessor:
             return empty, empty
 
         padding_side = side or self.default_side
+        if padding_side not in ("left", "right"):
+            raise ValueError(f"Invalid padding side '{padding_side}', must be 'left' or 'right'")
         batch_size = len(token_lists)
         max_len = max(len(s) for s in token_lists)
 
