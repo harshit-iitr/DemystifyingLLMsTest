@@ -1,12 +1,13 @@
 """Module implementation."""
+import math
 import torch
-import torch.nn.functional as F
 
 
-def apply_temperature(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
+def apply_temperature(logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
     """
     Apply temperature scaling to logits.
     """
-    probs = F.softmax(logits, dim=-1)
-    scaled = probs / temperature
-    return scaled
+    if not math.isfinite(temperature) or temperature <= 0:
+        raise ValueError("temperature must be finite and greater than zero")
+    scaled = torch.nan_to_num(logits) / temperature
+    return torch.nan_to_num(scaled)

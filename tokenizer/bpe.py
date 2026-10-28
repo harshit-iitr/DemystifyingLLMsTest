@@ -6,6 +6,8 @@ from .vocab import Vocabulary
 class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
         self.vocab = vocab or Vocabulary()
+        self.token_to_id = self.vocab._token_to_id
+        self.id_to_token = self.vocab._id_to_token
         self.merges: List[Tuple[str, str]] = merges or []
         self.vocab_size = 50257
 
@@ -57,6 +59,16 @@ class BPETokenizer:
         from .encoding import encode
         return encode(text, tokenizer=self, add_bos=add_bos)
 
-    def decode(self, ids: List[int], skip_special_tokens: bool = True) -> str:
-        from .decoding import decode
-        return decode(ids, vocab=self.vocab, skip_special_tokens=skip_special_tokens)
+    def decode(self, token_ids):
+        # Convert PyTorch tensor to list if needed
+        if hasattr(token_ids, 'tolist'):
+            token_ids = token_ids.tolist()
+        if isinstance(token_ids, int):
+            token_ids = [token_ids]
+
+        # Build inverse map if missing
+        if not hasattr(self, 'id_to_token') or not self.id_to_token:
+            self.id_to_token = {v: k for k, v in getattr(self, 'token_to_id', {}).items()}
+
+        tokens = [self.id_to_token.get(int(i), "") for i in token_ids]
+        return "".join(tokens).replace("Ġ", " ")
