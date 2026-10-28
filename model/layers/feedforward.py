@@ -54,7 +54,7 @@ class FeedForward(nn.Module):
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
         self.linear1 = nn.Linear(self.d_model, self.d_ffn, bias=bias)
-        self.activation = nn.GELU(approximate="tanh")
+        self.activation = nn.GELU()
         self.linear2 = nn.Linear(self.d_ffn, self.d_model, bias=bias)
         self.dropout = nn.Dropout(p=dropout_p)
 
