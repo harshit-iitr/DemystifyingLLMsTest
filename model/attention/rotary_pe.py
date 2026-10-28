@@ -37,6 +37,8 @@ class RotaryEmbedding(nn.Module):
 
     def __init__(self, dim: int, max_seq_len: int = 2048, base: float = 10000.0):
         super().__init__()
+        if dim % 2 != 0:
+            raise ValueError(f"Rotary embedding dimension must be even, got {dim}")
         self.dim = dim
         self.max_seq_len = max_seq_len
         self.base = base
@@ -50,8 +52,24 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("cos_cached", emb.cos(), persistent=False)
         self.register_buffer("sin_cached", emb.sin(), persistent=False)
 
-    def forward(self, x: torch.Tensor, seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        cos = self.cos_cached[:seq_len, :].to(dtype=x.dtype, device=x.device)
-        sin = self.sin_cached[:seq_len, :].to(dtype=x.dtype, device=x.device)
-        # Reshape to (1, 1, seq_len, dim) for head broadcasting
-        return cos.unsqueeze(0).unsqueeze(0), sin.unsqueeze(0).unsqueeze(0)
+    def forward(
+        self,
+        x: torch.Tensor,
+        seq_len: int,
+        offset: int = 0,
+        position_ids: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if position_ids is not None:
+            position_ids = position_ids.to(device=x.device, dtype=torch.long)
+            if position_ids.numel() and (position_ids.min() < 0 or position_ids.max() >= self.max_seq_len):
+                raise ValueError("Requested rotary position exceeds max_seq_len")
+            cos = self.cos_cached[position_ids].to(dtype=x.dtype, device=x.device).unsqueeze(1)
+            sin = self.sin_cached[position_ids].to(dtype=x.dtype, device=x.device).unsqueeze(1)
+        else:
+            if offset < 0 or offset + seq_len > self.max_seq_len:
+                raise ValueError("Requested rotary position exceeds max_seq_len")
+            cos = self.cos_cached[offset : offset + seq_len, :].to(dtype=x.dtype, device=x.device)
+            sin = self.sin_cached[offset : offset + seq_len, :].to(dtype=x.dtype, device=x.device)
+            cos = cos.unsqueeze(0).unsqueeze(0)
+            sin = sin.unsqueeze(0).unsqueeze(0)
+        return cos, sin

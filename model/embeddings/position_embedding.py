@@ -25,8 +25,8 @@ class SinusoidalPositionEmbedding(nn.Module):
             torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
         )
 
-        pe[:, 0::2] = torch.cos(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[: pe[:, 1::2].shape[1]])
 
         # Shape: (1, max_seq_len, d_model) for automatic batch broadcasting
         self.register_buffer("pe", pe.unsqueeze(0))
@@ -35,7 +35,8 @@ class SinusoidalPositionEmbedding(nn.Module):
         self,
         seq_len: int,
         offset: int = 0,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Extract positional encodings for the given sequence length and starting offset.
@@ -48,7 +49,13 @@ class SinusoidalPositionEmbedding(nn.Module):
         Returns:
             Tensor of shape (1, seq_len, d_model).
         """
-        if offset + seq_len > self.max_seq_len:
+        if position_ids is not None:
+            position_ids = position_ids.to(dtype=torch.long)
+            if position_ids.numel() and (position_ids.min() < 0 or position_ids.max() >= self.max_seq_len):
+                raise ValueError("Requested position index exceeds max_seq_len")
+            return self.pe[0][position_ids].to(device=device) if device is not None else self.pe[0][position_ids]
+
+        if offset < 0 or offset + seq_len > self.max_seq_len:
             raise ValueError(
                 f"Requested position index {offset + seq_len} exceeds max_seq_len {self.max_seq_len}"
             )
@@ -75,9 +82,16 @@ class LearnedPositionEmbedding(nn.Module):
         self,
         seq_len: int,
         offset: int = 0,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        positions = torch.arange(offset, offset + seq_len, dtype=torch.long)
-        if device is not None:
-            positions = positions.to(device)
-        return self.wpe(positions).unsqueeze(0)
+        if position_ids is not None:
+            positions = position_ids.to(device=device, dtype=torch.long) if device is not None else position_ids.long()
+            if positions.numel() and (positions.min() < 0 or positions.max() >= self.max_seq_len):
+                raise ValueError("Requested position index exceeds max_seq_len")
+        else:
+            if offset < 0 or offset + seq_len > self.max_seq_len:
+                raise ValueError("Requested position index exceeds max_seq_len")
+            positions = torch.arange(offset, offset + seq_len, dtype=torch.long, device=device)
+        embeddings = self.wpe(positions)
+        return embeddings if positions.dim() == 2 else embeddings.unsqueeze(0)
