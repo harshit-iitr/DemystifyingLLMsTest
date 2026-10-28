@@ -1,10 +1,12 @@
 """Module implementation."""
 from typing import List, Dict, Tuple, Optional
+import re
 from .vocab import Vocabulary
 
 
 class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
+        self._dynamic_vocabulary = vocab is None
         self.vocab = vocab or Vocabulary()
         self.merges: List[Tuple[str, str]] = merges or []
         self.vocab_size = 50257
@@ -19,12 +21,10 @@ class BPETokenizer:
     def _merge_word(self, pieces: List[str], pair: Tuple[str, str]) -> List[str]:
         new_pieces = []
         i = 0
-        merged = False
         while i < len(pieces):
-            if not merged and i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
+            if i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
                 new_pieces.append(pair[0] + pair[1])
                 i += 2
-                merged = True
             else:
                 new_pieces.append(pieces[i])
                 i += 1
@@ -37,10 +37,11 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
-
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        merge_ranks = {pair: rank for rank, pair in enumerate(self.merges)}
+        while len(pieces) > 1:
+            available = self._get_stats(pieces)
+            pair = min(available, key=lambda item: merge_ranks.get(item, float("inf")))
+            if pair not in merge_ranks:
                 break
             pieces = self._merge_word(pieces, pair)
 
@@ -48,9 +49,8 @@ class BPETokenizer:
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split(" "):
-            if word:
-                tokens.extend(self.bpe(word))
+        for piece in re.findall(r"\s+|\S+", text):
+            tokens.extend([piece] if piece.isspace() else self.bpe(piece))
         return tokens
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:
