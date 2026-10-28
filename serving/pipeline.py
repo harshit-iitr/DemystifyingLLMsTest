@@ -3,6 +3,7 @@ End-to-end serving pipeline connecting tokenization, model execution, and decodi
 """
 
 from typing import Optional, Any, Union, List
+import inspect
 import torch
 import torch.nn as nn
 
@@ -51,20 +52,59 @@ class ServingPipeline:
             tokens = self.tokenizer.encode(text)
         else:
             tokens = [ord(c) for c in text]
+        if not tokens:
+            tokens = [50256]
 
-        input_ids = tokens
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
-        # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("No inference model is available")
+
+        if hasattr(self.model, "eval"):
+            self.model.eval()
+        if hasattr(self.model, "to"):
+            self.model.to(self.device)
+        from inference.generation import autoregressive_generate
+        from inference.sampling import Sampler
+
+        generation_limit = max_new_tokens
+        if generation_limit is None:
+            generation_limit = self.inference_config.max_new_tokens
+        sampler = None
+        if self.inference_config.temperature > 0:
+            sampler = Sampler(
+                temperature=self.inference_config.temperature,
+                top_k=self.inference_config.top_k,
+                top_p=self.inference_config.top_p,
+                repetition_penalty=self.inference_config.repetition_penalty,
+            )
+
+        def sample_next(logits: torch.Tensor) -> torch.Tensor:
+            return sampler.sample(logits) if sampler is not None else torch.argmax(logits, dim=-1)
+
+        model_forward = getattr(self.model, "forward", None)
+        use_cache = self.inference_config.use_kv_cache
+        if model_forward is None:
+            use_cache = False
         else:
-            output = None
+            try:
+                parameters = inspect.signature(model_forward).parameters.values()
+                use_cache = use_cache and any(parameter.name == "kv_cache" for parameter in parameters)
+            except (TypeError, ValueError):
+                use_cache = False
 
-        # Step 3: Decoding
+        with torch.no_grad():
+            output_ids = autoregressive_generate(
+                self.model,
+                input_ids,
+                max_new_tokens=generation_limit,
+                eos_token_id=(self.inference_config.stop_token_ids[0]
+                              if self.inference_config.stop_token_ids else None),
+                sampler_fn=sample_next,
+                use_cache=use_cache,
+            )
+
+        output_tokens = output_ids[0, input_ids.size(1):].tolist()
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
-
-        return f"{text} [processed]"
+            return self.tokenizer.decode(output_tokens)
+        return " ".join(map(str, output_tokens))
