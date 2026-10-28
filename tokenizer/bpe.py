@@ -1,13 +1,18 @@
 """Module implementation."""
 from typing import List, Dict, Tuple, Optional
+import re
 from .vocab import Vocabulary
 
 
 class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
-        self.vocab = vocab or Vocabulary()
+        self.vocab = vocab if vocab is not None else Vocabulary()
         self.merges: List[Tuple[str, str]] = merges or []
-        self.vocab_size = 50257
+        self.vocab.decode_separator = "" if self.merges else " "
+
+    @property
+    def vocab_size(self) -> int:
+        return max(self.vocab._id_to_token, default=-1) + 1
 
     def _get_stats(self, pieces: List[str]) -> Dict[Tuple[str, str], int]:
         pairs: Dict[Tuple[str, str], int] = {}
@@ -19,38 +24,42 @@ class BPETokenizer:
     def _merge_word(self, pieces: List[str], pair: Tuple[str, str]) -> List[str]:
         new_pieces = []
         i = 0
-        merged = False
         while i < len(pieces):
-            if not merged and i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
+            if i < len(pieces) - 1 and pieces[i] == pair[0] and pieces[i + 1] == pair[1]:
                 new_pieces.append(pair[0] + pair[1])
                 i += 2
-                merged = True
             else:
                 new_pieces.append(pieces[i])
                 i += 1
         return new_pieces
 
     def bpe(self, token: str) -> List[str]:
-        if not self.merges or token in self.vocab:
+        if not self.merges:
             return [token]
         pieces = list(token)
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
-
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        ranks = {pair: rank for rank, pair in reversed(list(enumerate(self.merges)))}
+        while len(pieces) > 1:
+            pairs = self._get_stats(pieces)
+            candidates = [pair for pair in pairs if pair in ranks]
+            if not candidates:
                 break
+            pair = min(candidates, key=ranks.get)
             pieces = self._merge_word(pieces, pair)
 
         return pieces
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split(" "):
-            if word:
-                tokens.extend(self.bpe(word))
+        if self.merges:
+            for piece in re.findall(r"\s+|\S+", text):
+                tokens.extend([piece] if piece.isspace() else self.bpe(piece))
+        else:
+            for word in text.split(" "):
+                if word:
+                    tokens.append(word)
         return tokens
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:

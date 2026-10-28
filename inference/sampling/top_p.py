@@ -1,23 +1,16 @@
-"""Nucleus top-p sampling."""
+"""Keep the smallest descending-probability nucleus reaching p."""
 import torch
-import torch.nn.functional as F
 
 
 def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
-    """
-    Nucleus sampling.
-    """
-    if p >= 1.0 or p <= 0.0:
+    if not 0 <= p <= 1:
+        raise ValueError("p must be in [0, 1]")
+    if p == 1:
         return logits
-
-    probs = F.softmax(logits, dim=-1)
-    cumulative_probs = torch.cumsum(probs, dim=-1)
-
-    remove_mask = cumulative_probs > p
-    # Shift right to keep the first token that exceeds p
-    remove_mask = torch.roll(remove_mask, 1, dims=-1)
-    remove_mask[..., 0] = False
-
-    filtered_logits = logits.clone()
-    filtered_logits[remove_mask] = float("-inf")
-    return filtered_logits
+    sorted_logits, indices = torch.sort(logits, descending=True, dim=-1)
+    cumulative = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+    remove = cumulative > p
+    remove[..., 1:] = remove[..., :-1].clone()
+    remove[..., 0] = False
+    mask = torch.zeros_like(remove).scatter(-1, indices, remove)
+    return logits.masked_fill(mask, float("-inf"))

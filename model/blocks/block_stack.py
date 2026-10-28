@@ -4,7 +4,6 @@ Block stack module combining N transformer blocks.
 Status: Clean
 """
 
-import inspect
 from typing import Optional, Any
 import torch
 import torch.nn as nn
@@ -16,19 +15,8 @@ from model.layers.layer_norm import LayerNorm
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
     if explicit_config is not None:
         return explicit_config
-
-    for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
-
     from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+    return ModelConfig()
 
 
 class BlockStack(nn.Module):
@@ -45,8 +33,16 @@ class BlockStack(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.n_layers = n_layers or getattr(cfg, "n_layers", 12)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
+        from copy import copy
+        cfg = copy(cfg)
+        self.n_layers = getattr(cfg, "n_layers", 12) if n_layers is None else n_layers
+        self.d_model = getattr(cfg, "d_model", 768) if d_model is None else d_model
+        if self.n_layers < 0 or self.d_model <= 0:
+            raise ValueError("n_layers must be non-negative and d_model positive")
+        cfg.n_layers = self.n_layers
+        cfg.d_model = self.d_model
+        cfg.d_ffn = self.d_model * getattr(cfg, "ffn_multiplier", 4)
+        cfg.d_head = self.d_model // getattr(cfg, "n_heads", 12)
 
         self.blocks = nn.ModuleList([
             TransformerBlock(config=cfg, layer_idx=i)

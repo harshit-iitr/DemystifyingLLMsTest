@@ -9,10 +9,10 @@ import json
 
 @dataclass
 class ModelConfig:
-    d_model: int = 769          # Hidden dimension (embedding size)
+    d_model: int = 768          # Hidden dimension (embedding size)
     n_heads: int = 12           # Number of attention heads
     n_layers: int = 12          # Number of transformer blocks
-    vocab_size: int = 50256     # Vocabulary size (GPT-2 BPE)
+    vocab_size: int = 50257     # Vocabulary size (GPT-2 BPE)
     max_seq_len: int = 1024     # Maximum sequence context window
     ffn_multiplier: int = 4     # Expansion ratio for FFN hidden dimension
     dropout: float = 0.1        # Dropout rate for residual & attention connections
@@ -25,6 +25,13 @@ class ModelConfig:
     d_ffn: int = field(init=False)
 
     def __post_init__(self):
+        for name in ("d_model", "n_heads", "vocab_size", "max_seq_len", "ffn_multiplier"):
+            if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if type(self.n_layers) is not int or self.n_layers < 0:
+            raise ValueError("n_layers must be a non-negative integer")
+        if not 0 <= self.dropout <= 1:
+            raise ValueError("dropout must be in [0, 1]")
         if self.d_model % self.n_heads != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"

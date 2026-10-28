@@ -50,13 +50,13 @@ def main():
 
     # Step 3: Model Architecture Check
     print("\n[3/5] Instantiating transformer model layers...")
+    model = None
     try:
-        from model.embeddings import EmbeddingLayer
-        from model.blocks import BlockStack
-        from model.heads import LMHead
-        embeddings = EmbeddingLayer()
-        blocks = BlockStack()
-        head = LMHead()
+        from inference.engine.inference_engine import FullTransformerModel
+        import torch
+        if inference_config.seed is not None:
+            torch.manual_seed(inference_config.seed)
+        model = FullTransformerModel(model_config)
         print("  [OK] Transformer core submodules initialized.")
     except Exception as e:
         print(f"  [NOTE] Model submodule diagnostic note: {e}")
@@ -68,7 +68,10 @@ def main():
 
     try:
         from inference.engine import InferenceEngine
-        engine = InferenceEngine(model_config=model_config, inference_config=inference_config)
+        if model is None:
+            raise RuntimeError("Transformer initialization failed; see the diagnostic above")
+        engine = InferenceEngine(model_config=model_config, inference_config=inference_config, model=model)
+        print("  [NOTE] Using randomly initialized weights; generated tokens are a runtime check, not trained language output.")
         if hasattr(engine, "generate"):
             output = engine.generate(prompt, tokenizer=tokenizer)
             print(f"  Generated output: \"{output}\"")

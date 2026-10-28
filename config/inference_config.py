@@ -5,11 +5,12 @@ Inference and text generation configuration.
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 import json
+import math
 
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
@@ -22,6 +23,17 @@ class InferenceConfig:
 
     def validate(self) -> None:
         """Validate inference parameters."""
+        for name in ("max_new_tokens", "top_k", "beam_width"):
+            if type(getattr(self, name)) is not int:
+                raise ValueError(f"{name} must be an integer")
+        for name in ("temperature", "top_p", "repetition_penalty"):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+        if any(type(idx) is not int or idx < 0 for idx in self.stop_token_ids):
+            raise ValueError("stop_token_ids must contain non-negative integers")
+        if self.beam_width < 1:
+            raise ValueError("beam_width must be positive")
         if self.max_new_tokens < 0:
             raise ValueError(f"max_new_tokens must be non-negative, got {self.max_new_tokens}")
         if self.temperature < 0.0:
