@@ -9,7 +9,7 @@ import json
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
@@ -19,6 +19,9 @@ class InferenceConfig:
     early_stopping: bool = True
     beam_width: int = 1         # 1 indicates greedy / stochastic sampling (non-beam)
     seed: Optional[int] = 42
+
+    def __post_init__(self) -> None:
+        self.validate()
 
     def validate(self) -> None:
         """Validate inference parameters."""

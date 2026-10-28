@@ -28,6 +28,8 @@ def tie_weights(lm_head: Any, token_embedding: Any) -> None:
     if hasattr(lm_head, "tie_weights"):
         lm_head.tie_weights(weight)
     elif hasattr(lm_head, "proj"):
+        if lm_head.proj.weight.shape != weight.shape:
+            raise ValueError("LM head and token embedding weights must have matching shapes")
         lm_head.proj.weight = weight
     elif hasattr(lm_head, "weight"):
         lm_head.weight = weight
