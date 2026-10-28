@@ -52,7 +52,14 @@ class RequestHandler:
         else:
             generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
 
-        response_text = generated_tokens
+        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+            try:
+                completion_tokens = generated_tokens[len(prompt_tokens):]
+                response_text = self.tokenizer.decode(completion_tokens if len(completion_tokens) > 0 else generated_tokens)
+            except Exception:
+                response_text = str(generated_tokens)
+        else:
+            response_text = str(generated_tokens)
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
