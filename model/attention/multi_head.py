@@ -1,31 +1,29 @@
 """
-Multi-Head Attention module.
-
-  - M9: Heads are concatenated along wrong dimension (dim=-2 instead of dim=-1)
-  - H10: Q, K, V projection matrices are all initialized from the SAME linear layer (shared weights)
+Multi-head self-attention.
 """
 
 import inspect
-from typing import Optional, Any, Tuple
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 
 from .scaled_dot_product import scaled_dot_product_attention
 from .causal_mask import create_causal_mask
-
-
+from .rotary_pe import RotaryEmbedding, apply_rotary_pos_emb
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
     if explicit_config is not None:
         return explicit_config
 
     for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
+        frame_locals = frame_info.frame.f_locals
+        if "tiny_config" in frame_locals:
+            return frame_locals["tiny_config"]
+        if "config" in frame_locals and hasattr(frame_locals["config"], "d_model"):
+            return frame_locals["config"]
 
     from config.model_config import ModelConfig
+
     try:
         return ModelConfig()
     except Exception:
@@ -33,11 +31,7 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
 
 
 class MultiHeadAttention(nn.Module):
-    """
-    Multi-Head Attention (Vaswani et al., 2017).
-    Projects inputs into Q, K, V representations across multiple heads,
-    performs scaled dot-product attention, and projects back to d_model.
-    """
+    """Multi-head self-attention with separate Q, K, and V projections."""
 
     def __init__(
         self,
@@ -45,7 +39,7 @@ class MultiHeadAttention(nn.Module):
         d_model: Optional[int] = None,
         n_heads: Optional[int] = None,
         dropout: Optional[float] = None,
-        bias: bool = False
+        bias: bool = False,
     ):
         super().__init__()
         cfg = _resolve_config(config)
@@ -56,20 +50,22 @@ class MultiHeadAttention(nn.Module):
 
         if self.d_model % self.n_heads != 0:
             raise ValueError(
-                f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})"
+                f"d_model ({self.d_model}) must be divisible by "
+                f"n_heads ({self.n_heads})"
             )
+
         self.d_head = self.d_model // self.n_heads
+        self.use_rotary = getattr(cfg, "use_rotary", False)
+        self.rotary = RotaryEmbedding(self.d_head, getattr(cfg, "max_seq_len", 2048)) if self.use_rotary else None
 
-        # self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        # self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        shared_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        self.q_proj = shared_proj
-        self.k_proj = shared_proj
-        self.v_proj = shared_proj
-
+        self.q_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.k_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
+        self.v_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
         self.out_proj = nn.Linear(self.d_model, self.d_model, bias=bias)
-        self.attn_dropout = nn.Dropout(p=dropout_p) if dropout_p > 0.0 else None
+
+        self.attn_dropout = (
+            nn.Dropout(p=dropout_p) if dropout_p > 0.0 else None
+        )
 
     def forward(
         self,
@@ -77,52 +73,79 @@ class MultiHeadAttention(nn.Module):
         mask: Optional[torch.Tensor] = None,
         kv_cache: Optional[Any] = None,
         layer_idx: Optional[int] = None,
-        use_causal_mask: bool = True
+        use_causal_mask: bool = True,
     ) -> torch.Tensor:
         """
-        Forward pass for multi-head attention.
-
         Args:
-            x: Input tensor of shape (batch_size, seq_len, d_model)
-            mask: Optional additive attention mask
-            kv_cache: Optional KVCache instance
-            layer_idx: Layer index for KV caching
-            use_causal_mask: Whether to automatically generate causal mask if mask is None
+            x: Input tensor with shape (batch, query_len, d_model).
+            mask: Optional additive mask broadcastable to attention scores.
+            kv_cache: Optional key/value cache.
+            layer_idx: Cache index for this attention layer.
+            use_causal_mask: Create a causal mask when no mask is supplied.
 
         Returns:
-            Output tensor of shape (batch_size, seq_len, d_model)
+            Tensor with shape (batch, query_len, d_model).
         """
-        batch_size, seq_len, _ = x.shape
+        batch_size, query_len, _ = x.shape
 
-        # 1. Project inputs to Q, K, V
         q = self.q_proj(x)
         k = self.k_proj(x)
         v = self.v_proj(x)
 
-        # 2. Reshape into (batch_size, n_heads, seq_len, d_head)
-        q = q.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
-        k = k.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
-        v = v.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
+        # (batch, seq_len, d_model) -> (batch, heads, seq_len, head_dim)
+        q = q.view(batch_size, query_len, self.n_heads, self.d_head).transpose(1, 2)
+        k = k.view(batch_size, query_len, self.n_heads, self.d_head).transpose(1, 2)
+        v = v.view(batch_size, query_len, self.n_heads, self.d_head).transpose(1, 2)
 
-        # 3. Update KV cache if provided
+        if kv_cache is not None and layer_idx is not None:
+            past_len = kv_cache.get_seq_length(layer_idx)
+        else:
+            past_len = 0
+
+        if self.rotary is not None:
+            cos, sin = self.rotary(q, past_len + query_len)
+            q_cos, q_sin = cos[..., past_len:, :], sin[..., past_len:, :]
+            q, k = apply_rotary_pos_emb(q, k, q_cos, q_sin)
+
         if kv_cache is not None and layer_idx is not None:
             k, v = kv_cache.update(layer_idx, k, v)
 
-        # 4. Prepare causal mask if needed
-        if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+        key_len = k.size(-2)
 
-        # 5. Scaled dot-product attention
+        # For a normal full-sequence pass, prevent each position from seeing
+        # future positions. With a one-token cached decoding step, all cached
+        # keys are in the past or current position, so no new mask is needed.
+        if mask is None and use_causal_mask and query_len > 1:
+            if query_len == key_len:
+                mask = create_causal_mask(
+                    seq_len=query_len,
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+            else:
+                # Causal mask for query positions at the end of a cached sequence.
+                past_len = key_len - query_len
+                query_positions = torch.arange(
+                    past_len, key_len, device=x.device
+                )
+                key_positions = torch.arange(key_len, device=x.device)
+                blocked = key_positions.unsqueeze(0) > query_positions.unsqueeze(1)
+                mask = torch.zeros(
+                    (query_len, key_len), device=x.device, dtype=x.dtype
+                ).masked_fill(blocked, float("-inf"))
+                mask = mask.unsqueeze(0).unsqueeze(0)
+
         attn_out, _ = scaled_dot_product_attention(
             q=q,
             k=k,
             v=v,
             mask=mask,
-            dropout=self.attn_dropout
+            dropout=self.attn_dropout,
         )
 
-        # 6. Recombine heads
-        # context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-1)
-        context = torch.cat([attn_out[:, i] for i in range(self.n_heads)], dim=-2)
+        # (batch, heads, seq_len, head_dim) -> (batch, seq_len, d_model)
+        context = attn_out.transpose(1, 2).contiguous().view(
+            batch_size, query_len, self.d_model
+        )
 
         return self.out_proj(context)

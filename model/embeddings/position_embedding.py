@@ -1,83 +1,71 @@
-"""
-Positional embedding modules for transformer architectures.
-"""
+"""Sinusoidal and learned positional embeddings."""
 
 import math
 from typing import Optional
+
 import torch
 import torch.nn as nn
 
 
 class SinusoidalPositionEmbedding(nn.Module):
-    """
-    Sinusoidal Positional Encoding (Vaswani et al., 2017).
-    Precomputes fixed sin/cos frequencies across sequence positions and hidden dimensions.
-    """
+    """Fixed sinusoidal positional encodings."""
 
     def __init__(self, d_model: int = 768, max_seq_len: int = 1024):
         super().__init__()
         self.d_model = d_model
         self.max_seq_len = max_seq_len
 
-        pe = torch.zeros(max_seq_len, d_model)
-        position = torch.arange(0, max_seq_len, dtype=torch.float).unsqueeze(1)
+        positions = torch.arange(max_seq_len, dtype=torch.float32).unsqueeze(1)
         div_term = torch.exp(
-            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+            torch.arange(0, d_model, 2, dtype=torch.float32)
+            * (-math.log(10000.0) / d_model)
         )
 
-        pe[:, 0::2] = torch.cos(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = torch.zeros(max_seq_len, d_model)
+        pe[:, 0::2] = torch.sin(positions * div_term)
+        pe[:, 1::2] = torch.cos(positions * div_term[: pe[:, 1::2].shape[1]])
 
-        # Shape: (1, max_seq_len, d_model) for automatic batch broadcasting
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(
         self,
         seq_len: int,
         offset: int = 0,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
     ) -> torch.Tensor:
-        """
-        Extract positional encodings for the given sequence length and starting offset.
-
-        Args:
-            seq_len: Number of tokens in sequence.
-            offset: Position offset (used when KV-cache is active).
-            device: Target device placement.
-
-        Returns:
-            Tensor of shape (1, seq_len, d_model).
-        """
-        if offset + seq_len > self.max_seq_len:
+        end = offset + seq_len
+        if offset < 0 or end > self.max_seq_len:
             raise ValueError(
-                f"Requested position index {offset + seq_len} exceeds max_seq_len {self.max_seq_len}"
+                f"Requested positions [{offset}, {end}) exceed max_seq_len "
+                f"{self.max_seq_len}"
             )
 
-        encoding = self.pe[:, offset : offset + seq_len, :]
-        if device is not None:
-            encoding = encoding.to(device)
-        return encoding
+        encoding = self.pe[:, offset:end, :]
+        return encoding.to(device=device) if device is not None else encoding
 
 
 class LearnedPositionEmbedding(nn.Module):
-    """
-    Learned positional embedding table (GPT-2 standard approach).
-    """
+    """Learned positional embedding table."""
 
     def __init__(self, max_seq_len: int = 1024, d_model: int = 768):
         super().__init__()
         self.max_seq_len = max_seq_len
         self.d_model = d_model
         self.wpe = nn.Embedding(max_seq_len, d_model)
-        nn.init.normal_(self.wpe.weight, std=0.02)
+        nn.init.normal_(self.wpe.weight, mean=0.0, std=0.02)
 
     def forward(
         self,
         seq_len: int,
         offset: int = 0,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
     ) -> torch.Tensor:
-        positions = torch.arange(offset, offset + seq_len, dtype=torch.long)
-        if device is not None:
-            positions = positions.to(device)
+        end = offset + seq_len
+        if offset < 0 or end > self.max_seq_len:
+            raise ValueError(
+                f"Requested positions [{offset}, {end}) exceed max_seq_len "
+                f"{self.max_seq_len}"
+            )
+
+        positions = torch.arange(offset, end, dtype=torch.long, device=device)
         return self.wpe(positions).unsqueeze(0)

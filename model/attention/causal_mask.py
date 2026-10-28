@@ -1,9 +1,7 @@
-"""
-Causal masking module and utilities.
-
-"""
+"""Causal attention masks."""
 
 from typing import Optional
+
 import torch
 import torch.nn as nn
 
@@ -11,29 +9,25 @@ import torch.nn as nn
 def create_causal_mask(
     seq_len: int,
     device: Optional[torch.device] = None,
-    dtype: torch.dtype = torch.float32
+    dtype: torch.dtype = torch.float32,
 ) -> torch.Tensor:
     """
-    Generate an additive causal attention mask of shape (1, 1, seq_len, seq_len).
+    Return an additive mask of shape (1, 1, seq_len, seq_len).
 
-    In causal attention:
-      Positions where j <= i should have value 0.0 (allowed).
-      Positions where j > i should have value -inf (masked).
-
-    are masked with -inf and future positions (j >= i) are allowed!
+    Earlier and current positions are allowed (0); future positions are
+    masked (-inf).
     """
-    # mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype), diagonal=1)
-    mask = torch.tril(
-        torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype),
-        diagonal=-1
+    mask = torch.zeros((seq_len, seq_len), device=device, dtype=dtype)
+    future_positions = torch.triu(
+        torch.ones((seq_len, seq_len), device=device, dtype=torch.bool),
+        diagonal=1,
     )
+    mask = mask.masked_fill(future_positions, float("-inf"))
     return mask.unsqueeze(0).unsqueeze(0)
 
 
 class CausalMask(nn.Module):
-    """
-    Stateful causal mask module caching mask buffers up to max_seq_len.
-    """
+    """Causal mask module."""
 
     def __init__(self, max_seq_len: int = 2048):
         super().__init__()
@@ -43,6 +37,10 @@ class CausalMask(nn.Module):
         self,
         seq_len: int,
         device: Optional[torch.device] = None,
-        dtype: torch.dtype = torch.float32
+        dtype: torch.dtype = torch.float32,
     ) -> torch.Tensor:
-        return create_causal_mask(seq_len=seq_len, device=device, dtype=dtype)
+        if seq_len > self.max_seq_len:
+            raise ValueError(
+                f"seq_len ({seq_len}) exceeds max_seq_len ({self.max_seq_len})"
+            )
+        return create_causal_mask(seq_len, device=device, dtype=dtype)

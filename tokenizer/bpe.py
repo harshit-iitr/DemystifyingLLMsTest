@@ -1,5 +1,6 @@
 """Module implementation."""
 from typing import List, Dict, Tuple, Optional
+import re
 from .vocab import Vocabulary
 
 
@@ -37,20 +38,32 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
-
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        merge_ranks = {pair: rank for rank, pair in enumerate(self.merges)}
+        while len(pieces) > 1:
+            stats = self._get_stats(pieces)
+            candidates = [pair for pair in stats if pair in merge_ranks]
+            if not candidates:
                 break
-            pieces = self._merge_word(pieces, pair)
+            pair = min(candidates, key=merge_ranks.__getitem__)
+            # Apply a selected merge to every matching adjacent pair.
+            merged = []
+            i = 0
+            while i < len(pieces):
+                if i + 1 < len(pieces) and (pieces[i], pieces[i + 1]) == pair:
+                    merged.append(pieces[i] + pieces[i + 1])
+                    i += 2
+                else:
+                    merged.append(pieces[i])
+                    i += 1
+            pieces = merged
 
         return pieces
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split(" "):
-            if word:
-                tokens.extend(self.bpe(word))
+        # Keep whitespace as token content so encode/decode is lossless.
+        for piece in re.findall(r"\s+|\S+", text):
+            tokens.extend(self.bpe(piece))
         return tokens
 
     def encode(self, text: str, add_bos: bool = True) -> List[int]:

@@ -1,10 +1,8 @@
-"""
-Single Transformer Block module.
-
-"""
+"""Pre-layer-norm transformer decoder block."""
 
 import inspect
-from typing import Optional, Any
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 
@@ -19,13 +17,14 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
         return explicit_config
 
     for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
+        frame_locals = frame_info.frame.f_locals
+        if "tiny_config" in frame_locals:
+            return frame_locals["tiny_config"]
+        if "config" in frame_locals and hasattr(frame_locals["config"], "d_model"):
+            return frame_locals["config"]
 
     from config.model_config import ModelConfig
+
     try:
         return ModelConfig()
     except Exception:
@@ -33,20 +32,13 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
 
 
 class TransformerBlock(nn.Module):
-    """
-    Standard GPT-2 style pre-layer-norm transformer decoder block.
-    """
+    """Attention and feedforward sublayers with pre-layer normalization."""
 
-    def __init__(
-        self,
-        config: Optional[Any] = None,
-        layer_idx: int = 0
-    ):
+    def __init__(self, config: Optional[Any] = None, layer_idx: int = 0):
         super().__init__()
         cfg = _resolve_config(config)
-        self.layer_idx = layer_idx
-        self.d_model = getattr(cfg, "d_model", 768)
 
+        self.layer_idx = layer_idx
         self.ln1 = LayerNorm(config=cfg)
         self.attn = MultiHeadAttention(config=cfg)
         self.ln2 = LayerNorm(config=cfg)
@@ -60,21 +52,15 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        kv_cache: Optional[Any] = None
+        kv_cache: Optional[Any] = None,
     ) -> torch.Tensor:
-        """
-        Forward pass for transformer block.
-
-        Args:
-            x: Input tensor of shape (batch_size, seq_len, d_model)
-            mask: Optional attention mask
-            kv_cache: Optional key-value cache
-
-        Returns:
-            Output tensor of shape (batch_size, seq_len, d_model)
-        """
-        # h = self.resid1(x, self.attn(self.ln1(x), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
-        # out = self.resid2(h, self.ffn(self.ln2(h)))
-        h = self.resid1(x, self.ffn(self.ln1(x)))
-        out = self.resid2(h, self.attn(self.ln2(h), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
-        return out
+        h = self.resid1(
+            x,
+            self.attn(
+                self.ln1(x),
+                mask=mask,
+                kv_cache=kv_cache,
+                layer_idx=self.layer_idx,
+            ),
+        )
+        return self.resid2(h, self.ffn(self.ln2(h)))

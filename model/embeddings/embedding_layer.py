@@ -1,44 +1,16 @@
-"""
-Combined embedding layer fusing token and positional embeddings.
-"""
+"""Combine token and positional embeddings."""
 
-import inspect
-from typing import Optional, Union, Any
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 
+from config.model_config import ModelConfig
 from .token_embedding import TokenEmbedding
-from .position_embedding import SinusoidalPositionEmbedding, LearnedPositionEmbedding
-
-
-def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
-    """
-    Resolve configuration either from explicit argument, caller local context (e.g., test fixtures),
-    or default ModelConfig.
-    """
-    if explicit_config is not None:
-        return explicit_config
-
-    # Inspect call stack in case called from a test harness with `tiny_config`
-    for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
-
-    from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+from .position_embedding import LearnedPositionEmbedding, SinusoidalPositionEmbedding
 
 
 class EmbeddingLayer(nn.Module):
-    """
-    Fuses discrete token IDs with positional representations, followed by layer dropout.
-    """
-
     def __init__(
         self,
         config: Optional[Any] = None,
@@ -46,56 +18,29 @@ class EmbeddingLayer(nn.Module):
         d_model: Optional[int] = None,
         max_seq_len: Optional[int] = None,
         dropout: Optional[float] = None,
-        use_learned_pe: bool = False
+        learned_positions: bool = True,
     ):
         super().__init__()
-        cfg = _resolve_config(config)
+        cfg = config or ModelConfig()
+        self.d_model = d_model or cfg.d_model
+        self.vocab_size = vocab_size or cfg.vocab_size
+        self.max_seq_len = max_seq_len or cfg.max_seq_len
+        self.token_embedding = TokenEmbedding(self.vocab_size, self.d_model)
+        position_cls = LearnedPositionEmbedding if learned_positions else SinusoidalPositionEmbedding
+        self.position_embedding = position_cls(self.max_seq_len, self.d_model)
+        self.dropout = nn.Dropout(cfg.dropout if dropout is None else dropout)
 
-        self.vocab_size = vocab_size or getattr(cfg, "vocab_size", 50257)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
-        self.max_seq_len = max_seq_len or getattr(cfg, "max_seq_len", 1024)
-        dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
-
-        self.token_embedding = TokenEmbedding(
-            vocab_size=self.vocab_size,
-            d_model=self.d_model
-        )
-
-        if use_learned_pe:
-            self.position_embedding = LearnedPositionEmbedding(
-                max_seq_len=self.max_seq_len,
-                d_model=self.d_model
-            )
-        else:
-            self.position_embedding = SinusoidalPositionEmbedding(
-                d_model=self.d_model,
-                max_seq_len=self.max_seq_len
-            )
-
-        self.dropout = nn.Dropout(p=dropout_p)
-
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        offset: int = 0
-    ) -> torch.Tensor:
-        """
-        Embed token sequences and combine with positional encodings.
-
-        Args:
-            input_ids: LongTensor of shape (batch_size, seq_len).
-            offset: Position offset (for incremental decoding).
-
-        Returns:
-            Tensor of shape (batch_size, seq_len, d_model).
-        """
+    def forward(self, input_ids: torch.Tensor, offset: int = 0) -> torch.Tensor:
         if not isinstance(input_ids, torch.Tensor):
             raise TypeError(f"EmbeddingLayer expected torch.Tensor, got {type(input_ids)}")
+        if input_ids.ndim != 2:
+            raise ValueError(
+                f"input_ids must have shape (batch, seq_len); got {tuple(input_ids.shape)}"
+            )
 
-        batch_size, seq_len = input_ids.shape
-        tok_emb = self.token_embedding(input_ids)
-        pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
-
-        embeddings = tok_emb * pos_emb
-
-        return self.dropout(embeddings)
+        seq_len = input_ids.size(1)
+        token_embeddings = self.token_embedding(input_ids)
+        position_embeddings = self.position_embedding(
+            seq_len=seq_len, offset=offset, device=input_ids.device
+        )
+        return self.dropout(token_embeddings + position_embeddings)
