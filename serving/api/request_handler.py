@@ -32,6 +32,7 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        completion_count = 0
 
         # Tokenize prompt
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
@@ -44,15 +45,52 @@ class RequestHandler:
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                top_k=request_body.get("top_k"),
+                top_p=request_body.get("top_p"),
             )
+            if hasattr(generated_tokens, "detach"):
+                generated_tokens = generated_tokens.detach().reshape(-1).tolist()
+            else:
+                generated_tokens = list(generated_tokens)
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            response_text = raw_gen[len(prompt):] if isinstance(raw_gen, str) and raw_gen.startswith(prompt) else raw_gen
+            generated_tokens = []
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                try:
+                    completion_count = len(self.tokenizer.encode(response_text, add_bos=False))
+                except TypeError:
+                    completion_count = len(self.tokenizer.encode(response_text))
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("No inference engine is available")
 
-        response_text = generated_tokens
+        if self.engine is not None and hasattr(self.engine, "generate_tokens"):
+            if generated_tokens[:len(prompt_tokens)] == prompt_tokens:
+                completion_tokens = generated_tokens[len(prompt_tokens):]
+            else:
+                completion_tokens = generated_tokens
+            stop_ids = set(getattr(
+                getattr(self.engine, "inference_config", None),
+                "stop_token_ids",
+                [],
+            ))
+            vocab = getattr(self.tokenizer, "vocab", None)
+            if vocab is not None and hasattr(vocab, "eos_token_id"):
+                stop_ids.add(vocab.eos_token_id)
+            finish_reason = "length"
+            completion_count = len(completion_tokens)
+            for index, token_id in enumerate(completion_tokens):
+                if token_id in stop_ids:
+                    completion_tokens = completion_tokens[:index]
+                    finish_reason = "stop"
+                    break
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                response_text = self.tokenizer.decode(completion_tokens)
+            else:
+                response_text = " ".join(str(token) for token in completion_tokens)
+        else:
+            finish_reason = "length"
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,13 +102,13 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_count,
+                "total_tokens": len(prompt_tokens) + completion_count
             }
         }
 

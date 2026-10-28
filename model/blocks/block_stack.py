@@ -45,8 +45,12 @@ class BlockStack(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.n_layers = n_layers or getattr(cfg, "n_layers", 12)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
+        self.n_layers = n_layers if n_layers is not None else getattr(cfg, "n_layers", 12)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
+        if not isinstance(self.n_layers, int) or isinstance(self.n_layers, bool) or self.n_layers <= 0:
+            raise ValueError(f"n_layers must be a positive integer, got {self.n_layers!r}")
+        if not isinstance(self.d_model, int) or isinstance(self.d_model, bool) or self.d_model <= 0:
+            raise ValueError(f"d_model must be a positive integer, got {self.d_model!r}")
 
         self.blocks = nn.ModuleList([
             TransformerBlock(config=cfg, layer_idx=i)

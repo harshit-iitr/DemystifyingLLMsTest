@@ -30,6 +30,8 @@ class ModelEvaluator:
 
         with torch.no_grad():
             logits = self.model(input_ids)
+            if isinstance(logits, tuple):
+                logits = logits[0]
             loss = cross_entropy_loss(logits, target_ids).item()
             ppl = calculate_perplexity(loss)
             acc = token_accuracy(logits, target_ids)

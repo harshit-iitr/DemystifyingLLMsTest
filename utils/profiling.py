@@ -63,7 +63,6 @@ class LatencyProfiler:
         now = time.perf_counter()
         if self.start_time is None:
             self.start_time = now
-            return
 
         if self.ttft is None:
             self.ttft = now - self.start_time

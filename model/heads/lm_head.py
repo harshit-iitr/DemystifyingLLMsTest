@@ -40,10 +40,14 @@ class LMHead(nn.Module):
     ):
         super().__init__()
         cfg = _resolve_config(config)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
-        self.vocab_size = vocab_size or getattr(cfg, "vocab_size", 50257)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
+        self.vocab_size = vocab_size if vocab_size is not None else getattr(cfg, "vocab_size", 50257)
+        if not isinstance(self.d_model, int) or isinstance(self.d_model, bool) or self.d_model <= 0:
+            raise ValueError(f"d_model must be a positive integer, got {self.d_model!r}")
+        if not isinstance(self.vocab_size, int) or isinstance(self.vocab_size, bool) or self.vocab_size <= 0:
+            raise ValueError(f"vocab_size must be a positive integer, got {self.vocab_size!r}")
 
-        self.proj = nn.Linear(self.vocab_size, self.d_model, bias=bias)
+        self.proj = nn.Linear(self.d_model, self.vocab_size, bias=bias)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """

@@ -44,12 +44,16 @@ class FeedForward(nn.Module):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
         
         if d_ffn is not None:
             self.d_ffn = d_ffn
         else:
-            self.d_ffn = self.d_model * 2
+            self.d_ffn = self.d_model * getattr(cfg, "ffn_multiplier", 4)
+        if not isinstance(self.d_model, int) or isinstance(self.d_model, bool) or self.d_model <= 0:
+            raise ValueError(f"d_model must be a positive integer, got {self.d_model!r}")
+        if not isinstance(self.d_ffn, int) or isinstance(self.d_ffn, bool) or self.d_ffn <= 0:
+            raise ValueError(f"d_ffn must be a positive integer, got {self.d_ffn!r}")
 
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 

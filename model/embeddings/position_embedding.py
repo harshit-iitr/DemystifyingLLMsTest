@@ -8,6 +8,18 @@ import torch
 import torch.nn as nn
 
 
+def _validate_position_range(max_seq_len: int, seq_len: int, offset: int) -> None:
+    """Validate a positional embedding slice before indexing its table/cache."""
+    if not isinstance(seq_len, int) or isinstance(seq_len, bool) or seq_len < 0:
+        raise ValueError(f"seq_len must be a non-negative integer, got {seq_len!r}")
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ValueError(f"offset must be a non-negative integer, got {offset!r}")
+    if offset + seq_len > max_seq_len:
+        raise ValueError(
+            f"Requested position range [{offset}, {offset + seq_len}) exceeds max_seq_len {max_seq_len}"
+        )
+
+
 class SinusoidalPositionEmbedding(nn.Module):
     """
     Sinusoidal Positional Encoding (Vaswani et al., 2017).
@@ -16,6 +28,10 @@ class SinusoidalPositionEmbedding(nn.Module):
 
     def __init__(self, d_model: int = 768, max_seq_len: int = 1024):
         super().__init__()
+        if not isinstance(d_model, int) or isinstance(d_model, bool) or d_model <= 0:
+            raise ValueError(f"d_model must be a positive integer, got {d_model!r}")
+        if not isinstance(max_seq_len, int) or isinstance(max_seq_len, bool) or max_seq_len <= 0:
+            raise ValueError(f"max_seq_len must be a positive integer, got {max_seq_len!r}")
         self.d_model = d_model
         self.max_seq_len = max_seq_len
 
@@ -25,8 +41,8 @@ class SinusoidalPositionEmbedding(nn.Module):
             torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
         )
 
-        pe[:, 0::2] = torch.cos(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[: pe[:, 1::2].shape[1]])
 
         # Shape: (1, max_seq_len, d_model) for automatic batch broadcasting
         self.register_buffer("pe", pe.unsqueeze(0))
@@ -48,10 +64,7 @@ class SinusoidalPositionEmbedding(nn.Module):
         Returns:
             Tensor of shape (1, seq_len, d_model).
         """
-        if offset + seq_len > self.max_seq_len:
-            raise ValueError(
-                f"Requested position index {offset + seq_len} exceeds max_seq_len {self.max_seq_len}"
-            )
+        _validate_position_range(self.max_seq_len, seq_len, offset)
 
         encoding = self.pe[:, offset : offset + seq_len, :]
         if device is not None:
@@ -66,6 +79,10 @@ class LearnedPositionEmbedding(nn.Module):
 
     def __init__(self, max_seq_len: int = 1024, d_model: int = 768):
         super().__init__()
+        if not isinstance(d_model, int) or isinstance(d_model, bool) or d_model <= 0:
+            raise ValueError(f"d_model must be a positive integer, got {d_model!r}")
+        if not isinstance(max_seq_len, int) or isinstance(max_seq_len, bool) or max_seq_len <= 0:
+            raise ValueError(f"max_seq_len must be a positive integer, got {max_seq_len!r}")
         self.max_seq_len = max_seq_len
         self.d_model = d_model
         self.wpe = nn.Embedding(max_seq_len, d_model)
@@ -77,6 +94,7 @@ class LearnedPositionEmbedding(nn.Module):
         offset: int = 0,
         device: Optional[torch.device] = None
     ) -> torch.Tensor:
+        _validate_position_range(self.max_seq_len, seq_len, offset)
         positions = torch.arange(offset, offset + seq_len, dtype=torch.long)
         if device is not None:
             positions = positions.to(device)

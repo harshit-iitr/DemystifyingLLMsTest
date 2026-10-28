@@ -43,9 +43,22 @@ def cross_entropy_loss(
     Returns:
         Scalar loss tensor.
     """
+    if logits.ndim != 3:
+        raise ValueError(
+            f"logits must have shape (batch_size, seq_len, vocab_size), got {tuple(logits.shape)}"
+        )
+    if targets.ndim != 2:
+        raise ValueError(
+            f"targets must have shape (batch_size, seq_len), got {tuple(targets.shape)}"
+        )
+    if logits.shape[:2] != targets.shape:
+        raise ValueError(
+            f"logits batch/sequence shape {tuple(logits.shape[:2])} does not match "
+            f"targets shape {tuple(targets.shape)}"
+        )
     vocab_size = logits.size(-1)
-    flat_logits = logits.view(-1, vocab_size)
-    flat_targets = targets.view(-1)
+    flat_logits = logits.reshape(-1, vocab_size)
+    flat_targets = targets.reshape(-1)
     return F.cross_entropy(flat_logits, flat_targets, ignore_index=ignore_index)
 
 
@@ -70,6 +83,11 @@ def token_accuracy(
     else:
         pred_ids = predictions
 
+    if pred_ids.shape != targets.shape:
+        raise ValueError(
+            f"prediction shape {tuple(pred_ids.shape)} does not match target shape {tuple(targets.shape)}"
+        )
+
     mask = targets != ignore_index
     if mask.sum() == 0:
         return 0.0
@@ -90,6 +108,8 @@ def repetition_rate(token_ids: Sequence[int], n: int = 3) -> float:
     Returns:
         Ratio of duplicate n-grams to total n-grams.
     """
+    if n <= 0:
+        raise ValueError(f"n must be positive, got {n}")
     if len(token_ids) < n:
         return 0.0
 
