@@ -7,7 +7,7 @@ class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
         self.vocab = vocab or Vocabulary()
         self.merges: List[Tuple[str, str]] = merges or []
-        self.vocab_size = len(self.vocab)
+        self.vocab_size = max(self.vocab._id_to_token, default=-1) + 1
 
     def _get_stats(self, pieces: List[str]) -> Dict[Tuple[str, str], int]:
         pairs: Dict[Tuple[str, str], int] = {}

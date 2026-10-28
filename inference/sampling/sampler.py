@@ -25,6 +25,7 @@ class Sampler:
         self,
         logits: torch.Tensor,
         generated_tokens: Optional[Union[List[int], torch.Tensor]] = None,
+        generator: Optional[torch.Generator] = None,
     ) -> torch.Tensor:
         """
         Sample next token from logits tensor of shape (batch_size, vocab_size) or (vocab_size,).
@@ -54,5 +55,5 @@ class Sampler:
         probs = F.softmax(logits, dim=-1)
 
         # 5. Multinomial sample
-        next_token = torch.multinomial(probs, num_samples=1)
+        next_token = torch.multinomial(probs, num_samples=1, generator=generator)
         return next_token.squeeze(-1)

@@ -84,13 +84,14 @@ class TransformerServer:
     def start(self, background: bool = False) -> None:
         """Start the HTTP server on configured host and port."""
         handler_cls = create_handler_class(self.route_handler)
-        self._server = http.server.HTTPServer((self.config.host, self.config.port), handler_cls)
+        self._server = http.server.ThreadingHTTPServer((self.config.host, self.config.port), handler_cls)
         logger.info(f"Starting stdlib HTTP server at http://{self.config.host}:{self.config.port}")
 
         if background:
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
             self._thread.start()
         else:
+            self._thread = threading.current_thread()
             try:
                 self._server.serve_forever()
             except KeyboardInterrupt:
@@ -100,8 +101,15 @@ class TransformerServer:
     def stop(self) -> None:
         """Stop and shutdown the HTTP server."""
         if self._server:
-            self._server.shutdown()
+            if self._thread is threading.current_thread():
+                self._server.server_close()
+            else:
+                self._server.shutdown()
             self._server.server_close()
+            if self._thread is not None and self._thread is not threading.current_thread():
+                self._thread.join()
+            self._thread = None
+            self._server = None
             logger.info("HTTP server stopped.")
 
 

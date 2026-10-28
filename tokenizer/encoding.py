@@ -19,4 +19,6 @@ def encode(text: str, tokenizer: Optional[BPETokenizer] = None, vocab: Optional[
     if add_bos:
         token_ids = [vocab.bos_token_id] + token_ids
 
+    tokenizer.vocab_size = max(vocab._id_to_token, default=-1) + 1
+
     return token_ids
