@@ -5,33 +5,39 @@ Inference and text generation configuration.
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 import json
+import math
+from .constants import EOS_TOKEN_ID
 
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
     top_p: float = 0.9
     repetition_penalty: float = 1.1
-    stop_token_ids: List[int] = field(default_factory=list)
+    stop_token_ids: List[int] = field(default_factory=lambda: [EOS_TOKEN_ID])
     early_stopping: bool = True
     beam_width: int = 1         # 1 indicates greedy / stochastic sampling (non-beam)
     seed: Optional[int] = 42
 
     def validate(self) -> None:
         """Validate inference parameters."""
-        if self.max_new_tokens < 0:
+        if not isinstance(self.max_new_tokens, int) or isinstance(self.max_new_tokens, bool) or self.max_new_tokens < 0:
             raise ValueError(f"max_new_tokens must be non-negative, got {self.max_new_tokens}")
-        if self.temperature < 0.0:
+        if not math.isfinite(self.temperature) or self.temperature < 0.0:
             raise ValueError(f"temperature must be non-negative, got {self.temperature}")
         if not (0.0 <= self.top_p <= 1.0):
             raise ValueError(f"top_p must be in [0.0, 1.0], got {self.top_p}")
-        if self.top_k < 0:
+        if not isinstance(self.top_k, int) or isinstance(self.top_k, bool) or self.top_k < 0:
             raise ValueError(f"top_k must be non-negative, got {self.top_k}")
-        if self.repetition_penalty <= 0.0:
+        if not math.isfinite(self.repetition_penalty) or self.repetition_penalty <= 0.0:
             raise ValueError(f"repetition_penalty must be positive, got {self.repetition_penalty}")
+        if not isinstance(self.beam_width, int) or isinstance(self.beam_width, bool) or self.beam_width <= 0:
+            raise ValueError(f"beam_width must be a positive integer, got {self.beam_width}")
+        if any(not isinstance(token_id, int) or token_id < 0 for token_id in self.stop_token_ids):
+            raise ValueError("stop_token_ids must contain only non-negative integers")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""

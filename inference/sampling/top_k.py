@@ -9,9 +9,8 @@ def apply_top_k(logits: torch.Tensor, k: int) -> torch.Tensor:
     if k <= 0 or k >= logits.size(-1):
         return logits
 
-    val, idx = torch.topk(logits, k, largest=False, dim=-1)
-    # Mask out everything except the selected ones (which are lowest)
-    threshold = val[..., -1, None]
+    _, idx = torch.topk(logits, k, largest=True, dim=-1)
     filtered_logits = logits.clone()
-    filtered_logits[filtered_logits > threshold] = float("-inf")
+    keep_mask = torch.zeros_like(logits, dtype=torch.bool).scatter_(-1, idx, True)
+    filtered_logits.masked_fill_(~keep_mask, float("-inf"))
     return filtered_logits

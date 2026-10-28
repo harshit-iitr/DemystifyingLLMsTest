@@ -4,7 +4,7 @@ End-to-end serving pipeline connecting tokenization, model execution, and decodi
 
 from typing import Optional, Any, Union, List
 import torch
-import torch.nn as nn
+from inference.generation.autoregressive import autoregressive_generate
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
@@ -54,17 +54,27 @@ class ServingPipeline:
 
         input_ids = tokens
 
-        # Step 2: Model Forward Execution
+        # Step 2: Autoregressive generation
         if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
+            input_tensor = torch.tensor([input_ids], dtype=torch.long, device=self.device)
+            with torch.no_grad():
+                output = autoregressive_generate(
+                    self.model,
+                    input_tensor,
+                    max_new_tokens=(max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens),
+                    eos_token_id=(self.inference_config.stop_token_ids[0] if self.inference_config.stop_token_ids else None),
+                    use_cache=self.inference_config.use_kv_cache,
+                )
         else:
-            output = None
+            output = torch.tensor([input_ids], dtype=torch.long, device=self.device)
 
         # Step 3: Decoding
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
             if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
+                out_tokens = output.squeeze(0).tolist()
                 return self.tokenizer.decode(out_tokens)
             return self.tokenizer.decode(tokens)
 
-        return f"{text} [processed]"
+        if isinstance(output, torch.Tensor):
+            return "".join(chr(token) for token in output.squeeze(0).tolist() if 0 <= token <= 0x10FFFF)
+        return text
