@@ -2,7 +2,6 @@
 from typing import List, Optional
 from .bpe import BPETokenizer
 from .vocab import Vocabulary
-from .special_tokens import BOS_TOKEN
 
 
 def encode(text: str, tokenizer: Optional[BPETokenizer] = None, vocab: Optional[Vocabulary] = None, add_bos: bool = True) -> List[int]:
@@ -16,7 +15,9 @@ def encode(text: str, tokenizer: Optional[BPETokenizer] = None, vocab: Optional[
     tokens = tokenizer.tokenize(text)
     token_ids = [vocab.token_to_id(t) for t in tokens]
 
-    # if add_bos:
-    #     token_ids = [vocab.bos_token_id] + token_ids
+    if add_bos and vocab.bos_token_id is not None:
+        token_ids = [vocab.bos_token_id] + token_ids
+
+    tokenizer.vocab_size = max(vocab._id_to_token, default=-1) + 1
 
     return token_ids

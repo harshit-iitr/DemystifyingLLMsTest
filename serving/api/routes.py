@@ -40,8 +40,16 @@ class RouteHandler:
             return 200, self.handler.handle_models()
 
         if method == "POST" and clean_path in ("/v1/completions", "/completions"):
+            if body is not None and not isinstance(body, dict):
+                return 400, {"error": "Request body must be a JSON object"}
             request_body = body or {}
-            response = self.handler.handle_completion(request_body)
-            return 200, response
+            try:
+                response = self.handler.handle_completion(request_body)
+                return 200, response
+            except (TypeError, ValueError) as exc:
+                return 400, {"error": str(exc)}
+            except Exception as exc:
+                logger.exception("Completion request failed")
+                return 500, {"error": str(exc)}
 
         return 404, {"error": f"Endpoint not found: {method} {path}"}

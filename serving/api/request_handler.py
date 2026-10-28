@@ -32,6 +32,12 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or temperature < 0:
+            raise ValueError("temperature must be a non-negative number")
 
         # Tokenize prompt
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
@@ -46,13 +52,26 @@ class RequestHandler:
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
+            completion_tokens = generated_tokens[len(prompt_tokens):]
+            stop_ids = getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", [])
+            stopped = bool(completion_tokens and completion_tokens[-1] in stop_ids)
+            visible_tokens = completion_tokens[:-1] if stopped else completion_tokens
+            response_text = (self.tokenizer.decode(visible_tokens)
+                             if self.tokenizer is not None and hasattr(self.tokenizer, "decode")
+                             else "".join(chr(token) for token in visible_tokens if 0 <= token <= 0x10FFFF))
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens,
+                                           temperature=temperature)
+            response_text = raw_gen[len(prompt):] if raw_gen.startswith(prompt) else raw_gen
+            generated_tokens = (self.tokenizer.encode(raw_gen) if self.tokenizer is not None
+                                else [ord(c) for c in raw_gen])
+            completion_tokens = generated_tokens[len(prompt_tokens):]
+            stop_ids = getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", [])
+            stopped = bool(completion_tokens and completion_tokens[-1] in stop_ids)
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("No inference engine is available to serve this completion")
 
-        response_text = generated_tokens
+        finish_reason = "stop" if stopped else "length"
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,13 +83,13 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": len(completion_tokens),
+                "total_tokens": len(prompt_tokens) + len(completion_tokens)
             }
         }
 
