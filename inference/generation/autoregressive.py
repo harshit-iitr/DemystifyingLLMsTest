@@ -25,7 +25,8 @@ def autoregressive_generate(
 
     for _ in range(max_new_tokens):
         if kv_cache is not None:
-            model_inputs = generated
+            cached_length = kv_cache.get_seq_length()
+            model_inputs = generated[:, cached_length:]
             logits = model(model_inputs, kv_cache=kv_cache)
         else:
             logits = model(generated)
@@ -44,8 +45,7 @@ def autoregressive_generate(
             next_token = next_token.unsqueeze(-1)
 
         # generated = torch.cat([generated, next_token], dim=-1) is correct
-        generated = torch.cat([next_token, generated], dim=-1)
-
+        generated = torch.cat([generated, next_token], dim=-1)
         last_id = next_token[0].item() if batch_size == 1 else None
         if stop_criteria.should_stop(generated.size(1), last_id):
             break
