@@ -52,19 +52,30 @@ class ServingPipeline:
         else:
             tokens = [ord(c) for c in text]
 
-        input_ids = tokens
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
-        # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
-        else:
-            output = None
+        # Step 2: Autoregressive generation
+        n_new = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
+        out_tokens = list(tokens)
+        if self.model is not None and callable(self.model) and n_new > 0 and len(tokens) > 0:
+            if hasattr(self.model, "eval"):
+                self.model.eval()
+            stop_ids = set(self.inference_config.stop_token_ids or [])
+            with torch.no_grad():
+                for _ in range(n_new):
+                    input_ids = torch.tensor([out_tokens], dtype=torch.long, device=self.device)
+                    logits = self.model(input_ids)
+                    if isinstance(logits, tuple):
+                        logits = logits[0]
+                    next_token = int(torch.argmax(logits[:, -1, :], dim=-1).item())
+                    out_tokens.append(next_token)
+                    if next_token in stop_ids:
+                        break
 
         # Step 3: Decoding
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
+            return self.tokenizer.decode(out_tokens)
 
-        return f"{text} [processed]"
+        if self.model is None:
+            return f"{text} [processed]"
+        return "".join(chr(t) for t in out_tokens if 0 <= t < 0x110000)

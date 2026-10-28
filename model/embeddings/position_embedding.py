@@ -25,7 +25,7 @@ class SinusoidalPositionEmbedding(nn.Module):
             torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
         )
 
-        pe[:, 0::2] = torch.cos(position * div_term)
+        pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
 
         # Shape: (1, max_seq_len, d_model) for automatic batch broadcasting
@@ -35,7 +35,8 @@ class SinusoidalPositionEmbedding(nn.Module):
         self,
         seq_len: int,
         offset: int = 0,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        position_ids: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Extract positional encodings for the given sequence length and starting offset.
@@ -48,6 +49,12 @@ class SinusoidalPositionEmbedding(nn.Module):
         Returns:
             Tensor of shape (1, seq_len, d_model).
         """
+        if position_ids is not None:
+            encoding = self.pe[0, position_ids.clamp(min=0)]
+            if device is not None:
+                encoding = encoding.to(device)
+            return encoding
+
         if offset + seq_len > self.max_seq_len:
             raise ValueError(
                 f"Requested position index {offset + seq_len} exceeds max_seq_len {self.max_seq_len}"
@@ -75,8 +82,14 @@ class LearnedPositionEmbedding(nn.Module):
         self,
         seq_len: int,
         offset: int = 0,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        position_ids: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
+        if position_ids is not None:
+            pos = position_ids.clamp(min=0)
+            if device is not None:
+                pos = pos.to(device)
+            return self.wpe(pos)
         positions = torch.arange(offset, offset + seq_len, dtype=torch.long)
         if device is not None:
             positions = positions.to(device)

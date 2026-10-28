@@ -10,14 +10,17 @@ def apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     if p >= 1.0 or p <= 0.0:
         return logits
 
-    probs = F.softmax(logits, dim=-1)
-    cumulative_probs = torch.cumsum(probs, dim=-1)
+    # Sort by probability (descending) so the nucleus is the most likely tokens
+    sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
+    sorted_probs = F.softmax(sorted_logits, dim=-1)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-    remove_mask = cumulative_probs > p
-    # Shift right to keep the first token that exceeds p
-    remove_mask = torch.roll(remove_mask, 1, dims=-1)
-    remove_mask[..., 0] = False
+    # Remove tokens once cumulative mass (excluding the token itself) already exceeds p,
+    # which keeps the first token that crosses the threshold.
+    sorted_remove = (cumulative_probs - sorted_probs) > p
+    sorted_remove[..., 0] = False
 
+    remove_mask = torch.zeros_like(sorted_remove).scatter(-1, sorted_idx, sorted_remove)
     filtered_logits = logits.clone()
     filtered_logits[remove_mask] = float("-inf")
     return filtered_logits

@@ -24,12 +24,31 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        self.num_layers = config.n_layers
 
-    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
-        h = self.blocks(h, **kwargs)
+        if getattr(config, "tie_weights", False):
+            from model.heads import tie_weights
+            tie_weights(self.lm_head, self.embeddings.token_embedding)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        kv_cache: Optional[Any] = None,
+        **kwargs
+    ) -> torch.Tensor:
+        offset = kv_cache.get_seq_length(0) if kv_cache is not None else 0
+        position_ids = None
+        if attention_mask is not None:
+            # Real tokens get positions 0..n-1 regardless of left padding (BatchProcessor pads left)
+            position_ids = (attention_mask.long().cumsum(dim=-1) - 1).clamp(min=0)
+            if kwargs.get("mask") is None:
+                kwargs["mask"] = attention_mask
+            position_ids = position_ids[:, -input_ids.size(1):]
+        h = self.embeddings(input_ids, offset=offset, position_ids=position_ids)
+        h = self.blocks(h, kv_cache=kv_cache, **kwargs)
         logits = self.lm_head(h)
         return logits
 
@@ -68,8 +87,10 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None and hasattr(self.model, "eval"):
+            self.model.eval()
+            if hasattr(self.model, "to"):
+                self.model.to(self.device)
 
     def generate_tokens(
         self,
@@ -89,7 +110,17 @@ class InferenceEngine:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
+        k = top_k if top_k is not None else self.inference_config.top_k
+        p = top_p if top_p is not None else self.inference_config.top_p
         tokens = list(prompt_tokens)
+
+        from inference.sampling import Sampler
+        sampler = Sampler(
+            temperature=temp if temp > 0 else 1.0,
+            top_k=k,
+            top_p=p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
 
         # Autoregressive generation loop
         with torch.no_grad():
@@ -102,11 +133,11 @@ class InferenceEngine:
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
                         if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
+                            next_token = sampler.sample(next_token_logits, generated_tokens=tokens).item()
                         else:
                             next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Model forward failed during generation: {e}")
                         self._failed = True
                         next_token = (tokens[-1] + 1) % self.model_config.vocab_size
                 else:
