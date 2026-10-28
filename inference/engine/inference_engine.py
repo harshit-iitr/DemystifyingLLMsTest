@@ -63,6 +63,8 @@ class InferenceEngine:
             self.model.to(self.device)
         if hasattr(self.model, "eval"):
             self.model.eval()
+        elif hasattr(self.model, "train"):
+            self.model.train(False)
 
     @torch.no_grad()
     def generate_tokens(self, prompt_tokens: List[int], max_new_tokens: Optional[int] = None,

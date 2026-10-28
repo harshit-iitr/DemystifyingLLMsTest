@@ -35,7 +35,7 @@ class BPETokenizer:
         return new_pieces
 
     def bpe(self, token: str) -> List[str]:
-        if not self.merges:
+        if not self.merges or token in self.vocab:
             return [token]
         pieces = list(token)
         if len(pieces) <= 1:

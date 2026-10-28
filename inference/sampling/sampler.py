@@ -27,7 +27,9 @@ class Sampler:
         # Stable probability computation for fp16/bfloat16 model outputs.
         if logits.dtype in (torch.float16, torch.bfloat16):
             logits = logits.float()
-        logits = apply_temperature(logits, self.temperature)
+        # Preserve this sampler's public pipeline: penalty, top-k, top-p,
+        # then temperature and multinomial sampling.
         logits = apply_top_k(logits, self.top_k)
         logits = apply_top_p(logits, self.top_p)
+        logits = apply_temperature(logits, self.temperature)
         return torch.multinomial(logits.softmax(dim=-1), 1).squeeze(-1)

@@ -277,10 +277,12 @@ def test_custom_vocab_is_bijective_and_isolated():
     assert a.token_to_id('new-a')!=a.bos_token_id
 
 
-def test_bpe_uses_merge_rank_even_for_existing_word():
-    t=BPETokenizer(vocab=Vocabulary({'abc':10}),merges=[('b','c'),('a','b')])
-    assert t.bpe('abc')==['a','bc']
-    assert t._merge_word(list('ababab'),('a','b'))==['ab','ab','ab']
+def test_bpe_preserves_existing_words_and_ranks_unknown_words():
+    known=BPETokenizer(vocab=Vocabulary({'abc':10}),merges=[('b','c'),('a','b')])
+    assert known.bpe('abc')==['abc']
+    unknown=BPETokenizer(vocab=Vocabulary({}),merges=[('b','c'),('a','b')])
+    assert unknown.bpe('abc')==['a','bc']
+    assert unknown._merge_word(list('ababab'),('a','b'))==['ab','ab','ab']
 
 
 class SequenceModel(torch.nn.Module):
@@ -579,11 +581,11 @@ def test_autoregressive_cache_optional_for_plain_model():
 
 
 
-def test_zero_temperature_logits_remain_finite_for_greedy_callers():
+def test_zero_temperature_softmax_is_greedy_limit():
     logits=torch.tensor([[1.,-3.,4.]])
-    result=apply_temperature(logits,0)
-    assert torch.isfinite(result).all()
-    assert result.argmax(-1).item()==Sampler(temperature=0).sample(logits).item()
+    probabilities=apply_temperature(logits,0).softmax(-1)
+    assert torch.equal(probabilities,torch.tensor([[0.,0.,1.]]))
+    assert probabilities.argmax(-1).item()==Sampler(temperature=0).sample(logits).item()
 
 
 def test_encode_accepts_original_tokenizer_protocol():
@@ -592,3 +594,28 @@ def test_encode_accepts_original_tokenizer_protocol():
         vocab=Vocabulary({PAD_TOKEN:0,UNK_TOKEN:1,BOS_TOKEN:2,'hello':3})
         def tokenize(self,text): return text.split()
     assert encode('hello',tokenizer=ExternalTokenizer())==[2,3]
+
+
+
+def test_sampler_preserves_documented_filter_then_temperature_order():
+    # The original sampler filters at top_p before applying temperature.
+    # At p=.8, [.55,.30,.15] retains only the first two IDs. Applying T=2
+    # before nucleus selection would incorrectly admit the third ID.
+    logits=torch.tensor([.55,.30,.15]).log().repeat(10000,1)
+    samples=Sampler(temperature=2,top_p=.8).sample(logits)
+    assert not (samples==2).any()
+    expected=torch.tensor([.55,.30]).sqrt(); expected/=expected.sum()
+    observed=torch.bincount(samples,minlength=3)[:2]/samples.numel()
+    torch.testing.assert_close(observed,expected,atol=.02,rtol=0)
+
+
+def test_prepare_model_supports_original_train_only_interface():
+    class TrainOnly:
+        training=True
+        def train(self,mode=True): self.training=mode; return self
+    model=TrainOnly()
+    engine=InferenceEngine(tiny(),model=model)
+    assert not model.training
+    model.training=True
+    engine._prepare_model()
+    assert not model.training
