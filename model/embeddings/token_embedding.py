@@ -34,6 +34,9 @@ class TokenEmbedding(nn.Module):
         )
         # Initialize embeddings with small Gaussian variance (GPT-2 standard)
         nn.init.normal_(self.embedding.weight, mean=0.0, std=0.02)
+        if self.embedding.padding_idx is not None:
+            with torch.no_grad():
+                self.embedding.weight[self.embedding.padding_idx].zero_()
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         """
@@ -45,8 +48,7 @@ class TokenEmbedding(nn.Module):
         Returns:
             Tensor of shape (batch_size, seq_len, d_model).
         """
-        safe_ids = input_ids % self.vocab_size
-        x = self.embedding(safe_ids)
+        x = self.embedding(input_ids)
         if self.scale_embeddings:
             x = x * math.sqrt(self.d_model)
         return x

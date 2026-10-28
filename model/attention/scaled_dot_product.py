@@ -1,8 +1,6 @@
 """
 Scaled Dot-Product Attention implementation.
 
-  - M1: Missing / sqrt(d_k) scaling in attention scores
-  - H5: Softmax applied along dim=-2 instead of dim=-1
 """
 
 import math
@@ -27,29 +25,33 @@ def scaled_dot_product_attention(
         q: Query tensor of shape (batch, n_heads, seq_len_q, d_k)
         k: Key tensor of shape (batch, n_heads, seq_len_k, d_k)
         v: Value tensor of shape (batch, n_heads, seq_len_k, d_v)
-        mask: Optional additive attention mask
+        mask: Additive attention bias, or boolean mask (True means allowed)
         dropout: Optional dropout module
 
     Returns:
         Tuple of (output tensor, attention weights)
     """
-    d_k = q.size(-1)
-
-    # Compute raw query-key dot products: (batch, n_heads, seq_len_q, seq_len_k)
-    scores = torch.matmul(q, k.transpose(-2, -1))
-
-    # scores = scores / math.sqrt(d_k)
-
+    # Accumulate low-precision dot products and softmax in float32.
+    dtype = q.dtype
+    work_q = q.float() if dtype in (torch.float16, torch.bfloat16) else q
+    work_k = k.to(work_q.dtype)
+    scores = torch.matmul(work_q, work_k.transpose(-2, -1)) / math.sqrt(q.size(-1))
     if mask is not None:
-        scores = scores + mask
-
-    # attn_weights = F.softmax(scores, dim=-1)
-    attn_weights = F.softmax(scores, dim=-2)
-
+        mask = mask.to(device=scores.device)
+        if mask.dtype == torch.bool:
+            # Match torch.scaled_dot_product_attention: True means allowed.
+            scores = scores.masked_fill(~mask, float("-inf"))
+        else:
+            scores = scores + mask.to(scores.dtype)
+    # An entirely masked query has zero attention, rather than softmax(-inf)
+    # NaNs. Avoid evaluating an undefined softmax so gradients stay finite too.
+    blocked = torch.isneginf(scores).all(dim=-1, keepdim=True)
+    scores = scores.masked_fill(blocked, 0.0)
+    attn_weights = F.softmax(scores, dim=-1).masked_fill(blocked, 0.0).to(dtype)
     if dropout is not None:
         attn_weights = dropout(attn_weights)
-
     output = torch.matmul(attn_weights, v)
+
     return output, attn_weights
 
 

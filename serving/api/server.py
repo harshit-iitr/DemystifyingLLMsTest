@@ -44,17 +44,14 @@ def create_handler_class(router: RouteHandler):
             self._send_json_response(status, response)
 
         def do_POST(self):
-            content_length = int(self.headers.get("Content-Length", 0))
-            if content_length > 0:
-                raw_body = self.rfile.read(content_length).decode("utf-8")
-                try:
-                    body = json.loads(raw_body)
-                except Exception:
-                    self._send_json_response(400, {"error": "Invalid JSON payload"})
-                    return
-            else:
-                body = {}
-
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length < 0:
+                    raise ValueError("Negative Content-Length")
+                body = json.loads(self.rfile.read(content_length).decode("utf-8")) if content_length else {}
+            except (ValueError, UnicodeError):
+                self._send_json_response(400, {"error": "Invalid JSON payload or Content-Length"})
+                return
             status, response = router.dispatch("POST", self.path, body)
             self._send_json_response(status, response)
 
@@ -95,13 +92,18 @@ class TransformerServer:
                 self._server.serve_forever()
             except KeyboardInterrupt:
                 logger.info("Stopping HTTP server...")
-                self.stop()
+            finally:
+                self._server.server_close()
 
     def stop(self) -> None:
         """Stop and shutdown the HTTP server."""
         if self._server:
             self._server.shutdown()
             self._server.server_close()
+            if self._thread is not None and self._thread is not threading.current_thread():
+                self._thread.join(timeout=5)
+            self._server = None
+            self._thread = None
             logger.info("HTTP server stopped.")
 
 

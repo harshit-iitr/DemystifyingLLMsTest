@@ -29,30 +29,50 @@ class RequestHandler:
         Returns:
             Formatted response dictionary.
         """
+        if not isinstance(request_body, dict):
+            raise ValueError("Request body must be a JSON object")
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
-
-        # Tokenize prompt
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            prompt_tokens = self.tokenizer.encode(prompt)
-        else:
-            prompt_tokens = [ord(c) for c in prompt]
-
-        # Generate continuation
-        if self.engine is not None and hasattr(self.engine, "generate_tokens"):
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
+        from config.inference_config import InferenceConfig
+        InferenceConfig(max_new_tokens=max_tokens, temperature=temperature,
+                        top_k=request_body.get("top_k", 0),
+                        top_p=request_body.get("top_p", 1.0)).validate()
+        if self.engine is None:
+            raise RuntimeError("No inference engine configured")
+        if self.tokenizer is None:
+            raise RuntimeError("No tokenizer configured")
+        model_config = getattr(self.engine, "model_config", None)
+        if model_config is not None and hasattr(self.tokenizer, "bind_to_model"):
+            self.tokenizer.bind_to_model(model_config.vocab_size)
+        prompt_tokens = self.tokenizer.encode(prompt)
+        if hasattr(self.engine, "generate_tokens"):
+            options = {name: request_body[name] for name in ("top_k", "top_p") if name in request_body}
+            from inspect import signature
+            vocab = getattr(self.tokenizer, "vocab", None)
+            if vocab is not None and "eos_token_id" in signature(self.engine.generate_tokens).parameters:
+                options["eos_token_id"] = vocab.eos_token_id
             generated_tokens = self.engine.generate_tokens(
-                prompt_tokens=prompt_tokens,
-                max_new_tokens=max_tokens,
-                temperature=temperature
-            )
-        elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+                prompt_tokens=prompt_tokens, max_new_tokens=max_tokens,
+                temperature=temperature, **options)
+            response_text = self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+        elif hasattr(self.engine, "generate"):
+            # Preserve the public generate-only engine contract using its actual
+            # text output, without inventing token IDs or a continuation.
+            raw_text = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
+            if not isinstance(raw_text, str):
+                raise TypeError("Engine.generate must return text")
+            response_text = raw_text[len(prompt):] if raw_text.startswith(prompt) else raw_text
+            completion_ids = self.tokenizer.encode(response_text)
+            vocab = getattr(self.tokenizer, "vocab", None)
+            bos = getattr(vocab, "bos_token_id", None)
+            if bos is not None and completion_ids and completion_ids[0] == bos:
+                completion_ids = completion_ids[1:]
+            generated_tokens = list(prompt_tokens) + list(completion_ids)
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            raise TypeError("Engine must implement generate_tokens or generate")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,7 +84,7 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": "length" if len(generated_tokens) - len(prompt_tokens) == max_tokens else "stop"
                 }
             ],
             "usage": {

@@ -1,17 +1,11 @@
-"""Top-k sampling."""
+"""Keep the highest k logits."""
 import torch
 
 
 def apply_top_k(logits: torch.Tensor, k: int) -> torch.Tensor:
-    """
-    Mask logits outside top-k.
-    """
-    if k <= 0 or k >= logits.size(-1):
+    if k < 0:
+        raise ValueError("k must be non-negative")
+    if k == 0 or k >= logits.size(-1):
         return logits
-
-    val, idx = torch.topk(logits, k, largest=False, dim=-1)
-    # Mask out everything except the selected ones (which are lowest)
-    threshold = val[..., -1, None]
-    filtered_logits = logits.clone()
-    filtered_logits[filtered_logits > threshold] = float("-inf")
-    return filtered_logits
+    threshold = torch.topk(logits, k, dim=-1).values[..., -1, None]
+    return logits.masked_fill(logits < threshold, float("-inf"))

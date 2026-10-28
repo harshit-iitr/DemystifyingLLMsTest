@@ -74,8 +74,13 @@ def load_checkpoint(
         logger.info(f"Successfully loaded checkpoint via torch.load from {filepath}")
     except Exception as e:
         logger.debug(f"torch.load failed ({e}), attempting fallback pickle unpickler...")
+        class MappedUnpickler(pickle.Unpickler):
+            def find_class(self, module, name):
+                if module == "torch.storage" and name == "_load_from_bytes":
+                    return lambda data: torch.load(io.BytesIO(data), map_location=map_location, weights_only=False)
+                return super().find_class(module, name)
         with open(filepath, "rb") as f:
-            checkpoint = pickle.load(f)
+            checkpoint = MappedUnpickler(f).load()
         logger.info(f"Successfully loaded checkpoint via pickle from {filepath}")
 
     if not isinstance(checkpoint, dict):

@@ -2,7 +2,6 @@
 Combined embedding layer fusing token and positional embeddings.
 """
 
-import inspect
 from typing import Optional, Union, Any
 import torch
 import torch.nn as nn
@@ -12,26 +11,10 @@ from .position_embedding import SinusoidalPositionEmbedding, LearnedPositionEmbe
 
 
 def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
-    """
-    Resolve configuration either from explicit argument, caller local context (e.g., test fixtures),
-    or default ModelConfig.
-    """
     if explicit_config is not None:
         return explicit_config
-
-    # Inspect call stack in case called from a test harness with `tiny_config`
-    for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
-
     from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+    return ModelConfig()
 
 
 class EmbeddingLayer(nn.Module):
@@ -72,12 +55,14 @@ class EmbeddingLayer(nn.Module):
                 max_seq_len=self.max_seq_len
             )
 
+        self.use_rotary = getattr(cfg, "use_rotary", False)
         self.dropout = nn.Dropout(p=dropout_p)
 
     def forward(
         self,
         input_ids: torch.Tensor,
-        offset: int = 0
+        offset: int = 0,
+        position_ids: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Embed token sequences and combine with positional encodings.
@@ -94,8 +79,22 @@ class EmbeddingLayer(nn.Module):
 
         batch_size, seq_len = input_ids.shape
         tok_emb = self.token_embedding(input_ids)
-        pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
-
-        embeddings = tok_emb * pos_emb
+        if offset < 0 or offset + seq_len > self.max_seq_len:
+            raise ValueError("Requested sequence exceeds the embedding context window")
+        if self.use_rotary:
+            embeddings = tok_emb
+        else:
+            if position_ids is None:
+                pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
+            else:
+                if position_ids.shape != input_ids.shape:
+                    raise ValueError("position_ids must match input_ids shape")
+                if (position_ids < 0).any() or (position_ids >= self.max_seq_len).any():
+                    raise ValueError("position_ids exceed the embedding context window")
+                if isinstance(self.position_embedding, LearnedPositionEmbedding):
+                    pos_emb = self.position_embedding.wpe(position_ids)
+                else:
+                    pos_emb = self.position_embedding.pe[0, position_ids]
+            embeddings = tok_emb + pos_emb.to(dtype=tok_emb.dtype)
 
         return self.dropout(embeddings)
