@@ -16,16 +16,13 @@ def create_causal_mask(
     """
     Generate an additive causal attention mask of shape (1, 1, seq_len, seq_len).
 
-    In causal attention:
-      Positions where j <= i should have value 0.0 (allowed).
-      Positions where j > i should have value -inf (masked).
-
-    are masked with -inf and future positions (j >= i) are allowed!
+    In causal attention, positions where j <= i are allowed (0.0), while
+    future positions where j > i are masked (-inf).
     """
     # mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype), diagonal=1)
-    mask = torch.tril(
+    mask = torch.triu(
         torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype),
-        diagonal=-1
+        diagonal=1
     )
     return mask.unsqueeze(0).unsqueeze(0)
 

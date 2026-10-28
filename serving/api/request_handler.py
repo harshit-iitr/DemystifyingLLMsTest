@@ -4,6 +4,7 @@ HTTP API request parsing, validation, and execution handler.
 
 import time
 import uuid
+import math
 from typing import Dict, Any, Optional, List
 from utils.logging_utils import get_logger
 
@@ -32,6 +33,20 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
+        if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
+        if not isinstance(temperature, (int, float)) or not math.isfinite(temperature) or temperature < 0:
+            raise ValueError("temperature must be a finite non-negative number")
+        top_k = request_body.get("top_k")
+        top_p = request_body.get("top_p")
+        if top_k is not None and (not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < 0):
+            raise ValueError("top_k must be a non-negative integer")
+        if top_p is not None and (
+            not isinstance(top_p, (int, float)) or not math.isfinite(top_p) or not 0 <= top_p <= 1
+        ):
+            raise ValueError("top_p must be between 0 and 1")
 
         # Tokenize prompt
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
@@ -40,19 +55,35 @@ class RequestHandler:
             prompt_tokens = [ord(c) for c in prompt]
 
         # Generate continuation
+        response_text = None
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
+            generation_options = {
+                "prompt_tokens": prompt_tokens,
+                "max_new_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if top_k is not None:
+                generation_options["top_k"] = top_k
+            if top_p is not None:
+                generation_options["top_p"] = top_p
             generated_tokens = self.engine.generate_tokens(
-                prompt_tokens=prompt_tokens,
-                max_new_tokens=max_tokens,
-                temperature=temperature
+                **generation_options
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            response_text = raw_gen[len(prompt):] if isinstance(raw_gen, str) and raw_gen.startswith(prompt) else raw_gen
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                generated_tokens = self.tokenizer.encode(raw_gen)
+            else:
+                generated_tokens = [ord(char) for char in raw_gen]
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("No inference engine is configured")
 
-        response_text = generated_tokens
+        if response_text is None:
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                response_text = self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+            else:
+                response_text = "".join(chr(token) for token in generated_tokens[len(prompt_tokens):] if 0 <= token <= 0x10FFFF)
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",

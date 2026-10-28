@@ -92,6 +92,8 @@ class BatchProcessor:
         chunk_size: int
     ) -> List[torch.Tensor]:
         """Split a large batch tensor into smaller micro-batch chunks."""
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
         return list(torch.split(tensor, chunk_size, dim=0))
 
 

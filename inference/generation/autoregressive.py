@@ -21,11 +21,17 @@ def autoregressive_generate(
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)
 
-    kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
+    num_layers = getattr(model, "num_layers", None)
+    if num_layers is None:
+        num_layers = getattr(getattr(model, "config", None), "n_layers", None)
+    if num_layers is None and hasattr(model, "blocks"):
+        num_layers = len(model.blocks)
+    kv_cache = KVCache(num_layers=num_layers or 12) if use_cache else None
 
     for _ in range(max_new_tokens):
         if kv_cache is not None:
-            model_inputs = generated
+            cached_len = kv_cache.get_seq_length(0)
+            model_inputs = generated[:, cached_len:] if cached_len else generated
             logits = model(model_inputs, kv_cache=kv_cache)
         else:
             logits = model(generated)
@@ -43,8 +49,7 @@ def autoregressive_generate(
         if next_token.dim() == 1:
             next_token = next_token.unsqueeze(-1)
 
-        # generated = torch.cat([generated, next_token], dim=-1) is correct
-        generated = torch.cat([next_token, generated], dim=-1)
+        generated = torch.cat([generated, next_token], dim=-1)
 
         last_id = next_token[0].item() if batch_size == 1 else None
         if stop_criteria.should_stop(generated.size(1), last_id):
