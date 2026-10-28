@@ -62,6 +62,9 @@ class InferenceEngine:
         self.inference_config = inference_config or InferenceConfig()
         self.device = torch.device(device) if device else torch.device("cpu")
 
+        if self.inference_config.seed is not None:
+            torch.manual_seed(self.inference_config.seed)
+
         if model is not None:
             self.model = model
         else:
@@ -98,6 +101,9 @@ class InferenceEngine:
         max_tokens = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
         if max_tokens <= 0:
             return list(prompt_tokens)
+
+        if self.inference_config.seed is not None:
+            torch.manual_seed(self.inference_config.seed)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
         top_k = top_k if top_k is not None else self.inference_config.top_k
