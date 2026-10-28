@@ -100,6 +100,8 @@ class InferenceEngine:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
+        top_k = top_k if top_k is not None else self.inference_config.top_k
+        top_p = top_p if top_p is not None else self.inference_config.top_p
         tokens = list(prompt_tokens)
         model_cfg = getattr(self.model, "config", None) or self.model_config
         max_context = getattr(model_cfg, "max_seq_len", None)

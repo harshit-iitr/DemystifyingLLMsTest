@@ -48,6 +48,7 @@ def benchmark_forward_latency(
         "min_ms": round(min(latencies), 3),
         "max_ms": round(max(latencies), 3),
         "tokens_per_sec": round(tokens_per_sec, 1),
+        "throughput_tokens_per_sec": round(tokens_per_sec, 1),
     }
 
 
