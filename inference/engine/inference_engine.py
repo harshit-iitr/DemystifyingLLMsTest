@@ -23,12 +23,18 @@ class FullTransformerModel(nn.Module):
         from model.blocks import BlockStack
         from model.heads import LMHead
 
+        self.num_layers = config.n_layers
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        if getattr(config, "tie_weights", False):
+            from model.heads.weight_tying import tie_weights
+            tie_weights(self.lm_head, self.embeddings.token_embedding)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        kv_cache = kwargs.get("kv_cache")
+        offset = kv_cache.get_seq_length() if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
         h = self.blocks(h, **kwargs)
         logits = self.lm_head(h)
         return logits
@@ -68,8 +74,8 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None and hasattr(self.model, "eval"):
+            self.model.eval()
 
     def generate_tokens(
         self,
