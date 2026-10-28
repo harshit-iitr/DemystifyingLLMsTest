@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
+from config.constants import EOS_TOKEN_ID
 from inference.sampling import Sampler
 from utils.logging_utils import get_logger
 
@@ -107,6 +108,7 @@ class InferenceEngine:
         if cfg.seed is not None:
             torch.manual_seed(cfg.seed)
 
+        stop_ids = set(cfg.stop_token_ids) | {EOS_TOKEN_ID}
         tokens = list(prompt_tokens)
         max_len = getattr(self.model_config, "max_seq_len", None)
 
@@ -124,7 +126,7 @@ class InferenceEngine:
                 next_token = int(sampler.sample(next_token_logits, generated_tokens=tokens).item())
                 tokens.append(next_token)
 
-                if next_token in cfg.stop_token_ids:
+                if next_token in stop_ids:
                     break
 
         return tokens

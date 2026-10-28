@@ -6,7 +6,7 @@ Global Constants for Transformer Architecture and Runtime.
 PAD_TOKEN_ID = 0
 BOS_TOKEN_ID = 50256
 EOS_TOKEN_ID = 50256
-UNK_TOKEN_ID = 50256
+UNK_TOKEN_ID = 1
 
 # Mathematical and Numerical Stability Constants
 EPSILON = 1e-8

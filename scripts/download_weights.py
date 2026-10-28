@@ -32,12 +32,12 @@ def initialize_seeded_weights(output_path: str = DEFAULT_WEIGHTS_PATH, seed: int
     state_dict = {}
 
     # Embeddings
-    state_dict["embeddings.token_embedding.weight"] = torch.randn(config.vocab_size, config.d_model) * 0.02
-    state_dict["embeddings.position_embedding.weight"] = torch.randn(config.max_seq_len, config.d_model) * 0.02
+    state_dict["embeddings.token_embedding.embedding.weight"] = torch.randn(config.vocab_size, config.d_model) * 0.02
+    # Sinusoidal position embeddings are a fixed buffer and are not stored in the checkpoint
 
     # Blocks
     for layer_idx in range(config.n_layers):
-        prefix = f"blocks.{layer_idx}"
+        prefix = f"blocks.blocks.{layer_idx}"
         # Attention
         state_dict[f"{prefix}.attn.q_proj.weight"] = torch.randn(config.d_model, config.d_model) * 0.02
         state_dict[f"{prefix}.attn.k_proj.weight"] = torch.randn(config.d_model, config.d_model) * 0.02
@@ -47,12 +47,17 @@ def initialize_seeded_weights(output_path: str = DEFAULT_WEIGHTS_PATH, seed: int
         state_dict[f"{prefix}.ffn.linear1.weight"] = torch.randn(config.d_ffn, config.d_model) * 0.02
         state_dict[f"{prefix}.ffn.linear2.weight"] = torch.randn(config.d_model, config.d_ffn) * 0.02
         # LayerNorms
+        state_dict[f"{prefix}.ffn.linear1.bias"] = torch.zeros(config.d_ffn)
+        state_dict[f"{prefix}.ffn.linear2.bias"] = torch.zeros(config.d_model)
         state_dict[f"{prefix}.ln1.weight"] = torch.ones(config.d_model)
+        state_dict[f"{prefix}.ln1.bias"] = torch.zeros(config.d_model)
         state_dict[f"{prefix}.ln2.weight"] = torch.ones(config.d_model)
+        state_dict[f"{prefix}.ln2.bias"] = torch.zeros(config.d_model)
 
     # LM Head
-    state_dict["lm_head.weight"] = torch.randn(config.vocab_size, config.d_model) * 0.02
-    state_dict["final_ln.weight"] = torch.ones(config.d_model)
+    state_dict["lm_head.proj.weight"] = state_dict["embeddings.token_embedding.embedding.weight"].clone()
+    state_dict["blocks.final_ln.weight"] = torch.ones(config.d_model)
+    state_dict["blocks.final_ln.bias"] = torch.zeros(config.d_model)
 
     torch.save(state_dict, output_path)
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
