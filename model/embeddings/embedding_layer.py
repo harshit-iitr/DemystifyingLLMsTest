@@ -2,7 +2,6 @@
 Combined embedding layer fusing token and positional embeddings.
 """
 
-import inspect
 from typing import Optional, Union, Any
 import torch
 import torch.nn as nn
@@ -19,19 +18,8 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
     if explicit_config is not None:
         return explicit_config
 
-    # Inspect call stack in case called from a test harness with `tiny_config`
-    for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
-
     from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+    return ModelConfig()
 
 
 class EmbeddingLayer(nn.Module):
@@ -52,8 +40,19 @@ class EmbeddingLayer(nn.Module):
         cfg = _resolve_config(config)
 
         self.vocab_size = vocab_size or getattr(cfg, "vocab_size", 50257)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
-        self.max_seq_len = max_seq_len or getattr(cfg, "max_seq_len", 1024)
+        self.vocab_size = (
+            vocab_size if vocab_size is not None
+            else getattr(cfg, "vocab_size", 50257)
+        )
+        self.d_model = (
+            d_model if d_model is not None
+            else getattr(cfg, "d_model", 768)
+        )
+        self.max_seq_len = (
+            max_seq_len if max_seq_len is not None
+            else getattr(cfg, "max_seq_len", 1024)
+        )
+        
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
         self.token_embedding = TokenEmbedding(
@@ -96,6 +95,6 @@ class EmbeddingLayer(nn.Module):
         tok_emb = self.token_embedding(input_ids)
         pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
 
-        embeddings = tok_emb * pos_emb
+        embeddings = tok_emb + pos_emb
 
         return self.dropout(embeddings)

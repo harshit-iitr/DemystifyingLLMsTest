@@ -9,10 +9,10 @@ import json
 
 @dataclass
 class ModelConfig:
-    d_model: int = 769          # Hidden dimension (embedding size)
+    d_model: int = 768         # Hidden dimension (embedding size)
     n_heads: int = 12           # Number of attention heads
     n_layers: int = 12          # Number of transformer blocks
-    vocab_size: int = 50256     # Vocabulary size (GPT-2 BPE)
+    vocab_size: int = 50257     # Vocabulary size (GPT-2 BPE)
     max_seq_len: int = 1024     # Maximum sequence context window
     ffn_multiplier: int = 4     # Expansion ratio for FFN hidden dimension
     dropout: float = 0.1        # Dropout rate for residual & attention connections

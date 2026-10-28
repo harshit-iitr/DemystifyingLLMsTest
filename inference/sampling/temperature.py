@@ -1,12 +1,24 @@
-"""Module implementation."""
+"""Temperature scaling."""
 import torch
-import torch.nn.functional as F
 
 
-def apply_temperature(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
+def apply_temperature(
+    logits: torch.Tensor,
+    temperature: float = 1.0,
+) -> torch.Tensor:
     """
-    Apply temperature scaling to logits.
+    Scale logits by temperature.
+
+    Lower temperatures sharpen the resulting probability distribution;
+    higher temperatures make it more uniform.
+
+    Temperature zero is rejected because greedy decoding should be
+    handled directly by the generation engine.
     """
-    probs = F.softmax(logits, dim=-1)
-    scaled = probs / temperature
-    return scaled
+    if temperature <= 0:
+        raise ValueError(
+            "temperature must be strictly positive; "
+            "use greedy decoding when temperature is zero."
+        )
+
+    return logits / temperature
