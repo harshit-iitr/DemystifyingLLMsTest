@@ -32,27 +32,55 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        top_k = request_body.get("top_k")
+        top_p = request_body.get("top_p")
+
+        if not isinstance(prompt, str):
+            raise ValueError("prompt must be a string")
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 0:
+            raise ValueError("max_tokens must be a non-negative integer")
+        if not isinstance(temperature, (int, float)) or temperature <= 0:
+            raise ValueError("temperature must be a positive number")
+        if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 0):
+            raise ValueError("top_k must be a non-negative integer")
+        if top_p is not None and (not isinstance(top_p, (int, float)) or not 0 <= top_p <= 1):
+            raise ValueError("top_p must be between 0 and 1")
 
         # Tokenize prompt
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            prompt_tokens = self.tokenizer.encode(prompt)
-        else:
-            prompt_tokens = [ord(c) for c in prompt]
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise RuntimeError("A tokenizer with encode and decode methods is required")
+        prompt_tokens = self.tokenizer.encode(prompt)
 
         # Generate continuation
+        generated_text = None
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            generated_text = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
+            if isinstance(generated_text, str) and generated_text.startswith(prompt):
+                generated_text = generated_text[len(prompt):]
+            if not isinstance(generated_text, str):
+                raise TypeError("engine.generate must return a string")
+            generated_tokens = prompt_tokens
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("No inference engine is available")
 
-        response_text = generated_tokens
+        continuation_ids = generated_tokens[len(prompt_tokens):]
+        if generated_text is not None:
+            response_text = generated_text
+            try:
+                completion_count = len(self.tokenizer.encode(generated_text, add_bos=False))
+            except TypeError:
+                completion_count = len(self.tokenizer.encode(generated_text))
+        else:
+            response_text = self.tokenizer.decode(continuation_ids)
+            completion_count = len(continuation_ids)
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -69,8 +97,8 @@ class RequestHandler:
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": completion_count,
+                "total_tokens": len(prompt_tokens) + completion_count
             }
         }
 

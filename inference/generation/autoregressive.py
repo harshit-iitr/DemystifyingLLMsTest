@@ -1,6 +1,6 @@
 """Module implementation."""
 import torch
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Sequence, Union
 from .kv_cache import KVCache
 from .stop_criteria import StopCriteria
 
@@ -9,7 +9,7 @@ def autoregressive_generate(
     model: torch.nn.Module,
     input_ids: torch.Tensor,
     max_new_tokens: int = 20,
-    eos_token_id: Optional[int] = None,
+    eos_token_id: Optional[Union[int, Sequence[int]]] = None,
     sampler_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     use_cache: bool = False,
 ) -> torch.Tensor:
@@ -23,31 +23,50 @@ def autoregressive_generate(
 
     kv_cache = KVCache(num_layers=getattr(model, "num_layers", 12)) if use_cache else None
 
-    for _ in range(max_new_tokens):
-        if kv_cache is not None:
-            model_inputs = generated
-            logits = model(model_inputs, kv_cache=kv_cache)
-        else:
-            logits = model(generated)
+    was_training = model.training
+    model.eval()
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=generated.device)
+    try:
+        with torch.inference_mode():
+            for step in range(max_new_tokens):
+                if kv_cache is not None:
+                    model_inputs = generated if step == 0 else generated[:, -1:]
+                    logits = model(model_inputs, kv_cache=kv_cache)
+                else:
+                    logits = model(generated)
 
-        # Take logits for the last token position: (batch_size, vocab_size)
-        if isinstance(logits, tuple):
-            logits = logits[0]
-        next_token_logits = logits[:, -1, :]
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                next_token_logits = logits[:, -1, :]
 
-        if sampler_fn is not None:
-            next_token = sampler_fn(next_token_logits)
-        else:
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                if sampler_fn is not None:
+                    next_token = sampler_fn(next_token_logits)
+                else:
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
-        if next_token.dim() == 1:
-            next_token = next_token.unsqueeze(-1)
+                if next_token.dim() == 1:
+                    next_token = next_token.unsqueeze(-1)
 
-        # generated = torch.cat([generated, next_token], dim=-1) is correct
-        generated = torch.cat([next_token, generated], dim=-1)
+                # Keep already-finished rows at EOS while the remaining rows continue.
+                eos_ids = (
+                    list(eos_token_id)
+                    if isinstance(eos_token_id, (list, tuple, set))
+                    else [eos_token_id]
+                ) if eos_token_id is not None else []
+                if eos_ids:
+                    next_token = torch.where(
+                        finished.unsqueeze(-1),
+                        torch.full_like(next_token, eos_ids[0]),
+                        next_token,
+                    )
+                generated = torch.cat([generated, next_token], dim=-1)
 
-        last_id = next_token[0].item() if batch_size == 1 else None
-        if stop_criteria.should_stop(generated.size(1), last_id):
-            break
+                if eos_ids:
+                    eos_tensor = torch.as_tensor(eos_ids, device=next_token.device)
+                    finished |= torch.isin(next_token.squeeze(-1), eos_tensor)
+                if generated.size(1) >= stop_criteria.max_length or (eos_ids and finished.all()):
+                    break
+    finally:
+        model.train(was_training)
 
     return generated

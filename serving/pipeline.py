@@ -33,7 +33,10 @@ class ServingPipeline:
         except Exception:
             self.config = ModelConfig(d_model=768, vocab_size=50257)
         self.inference_config = inference_config or InferenceConfig()
+        self.inference_config.validate()
         self.device = torch.device(device) if device else torch.device("cpu")
+        if self.model is not None and hasattr(self.model, "to"):
+            self.model.to(self.device)
 
     def process(self, text: str, max_new_tokens: Optional[int] = None) -> str:
         """
@@ -46,25 +49,29 @@ class ServingPipeline:
         Returns:
             Decoded completion string.
         """
-        # Step 1: Tokenization
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            tokens = self.tokenizer.encode(text)
-        else:
-            tokens = [ord(c) for c in text]
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise ValueError("A tokenizer with encode and decode methods is required")
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("A callable model is required")
 
-        input_ids = tokens
+        from inference.generation.autoregressive import autoregressive_generate
+        from inference.sampling.sampler import Sampler
 
-        # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
-        else:
-            output = None
-
-        # Step 3: Decoding
-        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
-
-        return f"{text} [processed]"
+        token_ids = self.tokenizer.encode(text)
+        input_ids = torch.tensor([token_ids], dtype=torch.long, device=self.device)
+        token_count = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
+        sampler = Sampler(
+            temperature=self.inference_config.temperature,
+            top_k=self.inference_config.top_k,
+            top_p=self.inference_config.top_p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
+        generated = autoregressive_generate(
+            self.model,
+            input_ids,
+            max_new_tokens=token_count,
+            eos_token_id=self.inference_config.stop_token_ids or None,
+            sampler_fn=sampler.sample,
+            use_cache=self.inference_config.use_kv_cache,
+        )
+        return self.tokenizer.decode(generated[0].tolist())
