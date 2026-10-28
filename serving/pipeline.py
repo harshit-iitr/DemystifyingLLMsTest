@@ -56,7 +56,8 @@ class ServingPipeline:
 
         # Step 2: Model Forward Execution
         if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
+            input_tensor = torch.tensor([input_ids], dtype=torch.long, device=self.device)
+            output = self.model(input_tensor)
         else:
             output = None
 

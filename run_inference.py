@@ -9,10 +9,12 @@ Run this script to inspect system behavior and diagnose failure modes:
 import sys
 import os
 
-# Ensure UTF-8 stdout if supported by runtime environment
-if hasattr(sys.stdout, "reconfigure"):
+# Ensure UTF-8 stdout if supported by runtime environment. ``getattr`` keeps
+# this compatible with text streams whose static type omits ``reconfigure``.
+reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
+if callable(reconfigure_stdout):
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
+        reconfigure_stdout(encoding="utf-8")
     except Exception:
         pass
 

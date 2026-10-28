@@ -2,7 +2,6 @@
 Combined embedding layer fusing token and positional embeddings.
 """
 
-import inspect
 from typing import Optional, Union, Any
 import torch
 import torch.nn as nn
@@ -19,19 +18,8 @@ def _resolve_config(explicit_config: Optional[Any] = None) -> Any:
     if explicit_config is not None:
         return explicit_config
 
-    # Inspect call stack in case called from a test harness with `tiny_config`
-    for frame_info in inspect.stack():
-        f_locals = frame_info.frame.f_locals
-        if "tiny_config" in f_locals:
-            return f_locals["tiny_config"]
-        if "config" in f_locals and hasattr(f_locals["config"], "d_model"):
-            return f_locals["config"]
-
     from config.model_config import ModelConfig
-    try:
-        return ModelConfig()
-    except Exception:
-        return ModelConfig(d_model=768, vocab_size=50257)
+    return ModelConfig()
 
 
 class EmbeddingLayer(nn.Module):
@@ -46,14 +34,14 @@ class EmbeddingLayer(nn.Module):
         d_model: Optional[int] = None,
         max_seq_len: Optional[int] = None,
         dropout: Optional[float] = None,
-        use_learned_pe: bool = False
+        use_learned_pe: Optional[bool] = None
     ):
         super().__init__()
         cfg = _resolve_config(config)
 
-        self.vocab_size = vocab_size or getattr(cfg, "vocab_size", 50257)
-        self.d_model = d_model or getattr(cfg, "d_model", 768)
-        self.max_seq_len = max_seq_len or getattr(cfg, "max_seq_len", 1024)
+        self.vocab_size = vocab_size if vocab_size is not None else getattr(cfg, "vocab_size", 50257)
+        self.d_model = d_model if d_model is not None else getattr(cfg, "d_model", 768)
+        self.max_seq_len = max_seq_len if max_seq_len is not None else getattr(cfg, "max_seq_len", 1024)
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 
         self.token_embedding = TokenEmbedding(
@@ -61,11 +49,16 @@ class EmbeddingLayer(nn.Module):
             d_model=self.d_model
         )
 
+        use_rotary = getattr(cfg, "use_rotary", False)
+        if use_learned_pe is None:
+            use_learned_pe = not use_rotary
         if use_learned_pe:
             self.position_embedding = LearnedPositionEmbedding(
                 max_seq_len=self.max_seq_len,
                 d_model=self.d_model
             )
+        elif use_rotary:
+            self.position_embedding = None
         else:
             self.position_embedding = SinusoidalPositionEmbedding(
                 d_model=self.d_model,
@@ -77,7 +70,8 @@ class EmbeddingLayer(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        offset: int = 0
+        offset: int = 0,
+        attention_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Embed token sequences and combine with positional encodings.
@@ -94,8 +88,22 @@ class EmbeddingLayer(nn.Module):
 
         batch_size, seq_len = input_ids.shape
         tok_emb = self.token_embedding(input_ids)
-        pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
-
-        embeddings = tok_emb * pos_emb
+        if self.position_embedding is None:
+            embeddings = tok_emb
+        else:
+            position_ids = None
+            if attention_mask is not None:
+                if attention_mask.shape != input_ids.shape:
+                    raise ValueError("attention_mask must have the same shape as input_ids")
+                valid = attention_mask.to(device=input_ids.device, dtype=torch.bool)
+                position_ids = valid.long().cumsum(dim=-1) - 1
+                position_ids.masked_fill_(~valid, 0)
+                if offset:
+                    position_ids = position_ids + offset
+            pos_emb = self.position_embedding(
+                seq_len=seq_len, offset=offset, device=input_ids.device,
+                position_ids=position_ids
+            )
+            embeddings = tok_emb + pos_emb.to(dtype=tok_emb.dtype)
 
         return self.dropout(embeddings)

@@ -5,11 +5,12 @@ Inference and text generation configuration.
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 import json
+import math
 
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
@@ -24,14 +25,25 @@ class InferenceConfig:
         """Validate inference parameters."""
         if self.max_new_tokens < 0:
             raise ValueError(f"max_new_tokens must be non-negative, got {self.max_new_tokens}")
-        if self.temperature < 0.0:
-            raise ValueError(f"temperature must be non-negative, got {self.temperature}")
-        if not (0.0 <= self.top_p <= 1.0):
+        if not math.isfinite(self.temperature) or self.temperature < 0.0:
+            raise ValueError(f"temperature must be a finite non-negative value, got {self.temperature}")
+        if not math.isfinite(self.top_p) or not (0.0 <= self.top_p <= 1.0):
             raise ValueError(f"top_p must be in [0.0, 1.0], got {self.top_p}")
         if self.top_k < 0:
             raise ValueError(f"top_k must be non-negative, got {self.top_k}")
-        if self.repetition_penalty <= 0.0:
+        if not math.isfinite(self.repetition_penalty) or self.repetition_penalty <= 0.0:
             raise ValueError(f"repetition_penalty must be positive, got {self.repetition_penalty}")
+        if self.beam_width < 1:
+            raise ValueError(f"beam_width must be at least 1, got {self.beam_width}")
+        if not isinstance(self.stop_token_ids, (list, tuple)):
+            raise ValueError("stop_token_ids must be a sequence of token IDs")
+        for token_id in self.stop_token_ids:
+            if isinstance(token_id, bool) or not isinstance(token_id, int) or token_id < 0:
+                raise ValueError(
+                    f"stop_token_ids must contain non-negative integers, got {token_id!r}"
+                )
+        if self.seed is not None and (isinstance(self.seed, bool) or not isinstance(self.seed, int)):
+            raise ValueError(f"seed must be an integer or None, got {self.seed!r}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""

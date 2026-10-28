@@ -10,14 +10,15 @@ class Vocabulary:
     def __init__(self, vocab_dict: Optional[Dict[str, int]] = None):
         self._token_to_id: Dict[str, int] = {}
         self._id_to_token: Dict[int, str] = {}
-        
-        self.pad_token_id: int = -1
+
+        self.pad_token_id: int = 0
         self.unk_token_id: int = 1
         self.bos_token_id: int = 50256
         self.eos_token_id: int = 50256
 
-        self.add_token(PAD_TOKEN, 0)
-        self.add_token(UNK_TOKEN, 1)
+        self.add_token(PAD_TOKEN, self.pad_token_id)
+        self.add_token(UNK_TOKEN, self.unk_token_id)
+        self.add_token(BOS_TOKEN, self.bos_token_id)
 
         if vocab_dict is not None:
             for token, idx in vocab_dict.items():
@@ -56,6 +57,11 @@ class Vocabulary:
 
     def __len__(self) -> int:
         return len(self._token_to_id)
+
+    @property
+    def size(self) -> int:
+        """Minimum embedding-table size able to represent every assigned token ID."""
+        return max(self._id_to_token, default=-1) + 1
 
     def __contains__(self, token: str) -> bool:
         return token in self._token_to_id or token in Vocabulary._shared_vocab

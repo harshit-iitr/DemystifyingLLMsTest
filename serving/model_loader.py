@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from utils.checkpoint import load_checkpoint
 from utils.logging_utils import get_logger
+from config.constants import DEFAULT_WEIGHTS_PATH
 
 logger = get_logger("model_loader")
 
@@ -19,8 +20,8 @@ class ModelLoader:
     into transformer model instances.
     """
 
-    DEFAULT_WEIGHTS_FILE = "model_weights.pth"
-    DEFAULT_WEIGHTS_DIR = "weights"
+    DEFAULT_WEIGHTS_FILE = os.path.basename(DEFAULT_WEIGHTS_PATH)
+    DEFAULT_WEIGHTS_DIR = os.path.dirname(DEFAULT_WEIGHTS_PATH)
 
     def __init__(self, weights_path: Optional[str] = None):
         if weights_path is not None:
@@ -54,7 +55,8 @@ class ModelLoader:
             )
 
         logger.info(f"Loading weights from {self.weights_path}...")
-        state_dict = load_checkpoint(self.weights_path, map_location=map_location)
+        checkpoint = load_checkpoint(self.weights_path, map_location=map_location)
+        state_dict = checkpoint.get("state_dict", checkpoint)
         model.load_state_dict(state_dict, strict=strict)
         logger.info("Model weights loaded successfully.")
         return model

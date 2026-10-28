@@ -81,10 +81,6 @@ def load_checkpoint(
     if not isinstance(checkpoint, dict):
         raise ValueError(f"Expected checkpoint dictionary, but got {type(checkpoint)}")
 
-    # Unpack state_dict if nested inside envelope
-    if "state_dict" in checkpoint:
-        return checkpoint["state_dict"]
-
     return checkpoint
 
 
@@ -92,7 +88,8 @@ def inspect_checkpoint(filepath: str) -> Dict[str, Any]:
     """
     Inspect checkpoint structure, parameter names, and shapes without full memory allocation.
     """
-    state_dict = load_checkpoint(filepath, map_location="cpu")
+    checkpoint = load_checkpoint(filepath, map_location="cpu")
+    state_dict = checkpoint.get("state_dict", checkpoint)
     summary = {}
     for key, value in state_dict.items():
         if isinstance(value, torch.Tensor):

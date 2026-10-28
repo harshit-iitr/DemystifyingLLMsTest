@@ -45,8 +45,20 @@ class TokenEmbedding(nn.Module):
         Returns:
             Tensor of shape (batch_size, seq_len, d_model).
         """
-        safe_ids = input_ids % self.vocab_size
-        x = self.embedding(safe_ids)
+        if not isinstance(input_ids, torch.Tensor):
+            raise TypeError(f"input_ids must be a torch.Tensor, got {type(input_ids)}")
+        if input_ids.dtype not in (torch.int32, torch.int64):
+            raise TypeError(f"input_ids must use an integer dtype, got {input_ids.dtype}")
+        if input_ids.numel() > 0:
+            min_id = int(input_ids.min().item())
+            max_id = int(input_ids.max().item())
+            if min_id < 0 or max_id >= self.vocab_size:
+                raise ValueError(
+                    f"input token IDs must be in [0, {self.vocab_size}), "
+                    f"got range [{min_id}, {max_id}]"
+                )
+
+        x = self.embedding(input_ids)
         if self.scale_embeddings:
             x = x * math.sqrt(self.d_model)
         return x

@@ -27,6 +27,12 @@ def benchmark_forward_latency(
     """
     model.eval()
     batch_size, seq_len = sample_input.shape
+    is_cuda = sample_input.device.type == "cuda"
+
+    if benchmark_runs <= 0:
+        raise ValueError("benchmark_runs must be positive")
+    if warmup_runs < 0:
+        raise ValueError("warmup_runs must be non-negative")
 
     with torch.no_grad():
         for _ in range(warmup_runs):
@@ -34,8 +40,12 @@ def benchmark_forward_latency(
 
         latencies = []
         for _ in range(benchmark_runs):
+            if is_cuda:
+                torch.cuda.synchronize(sample_input.device)
             start = time.perf_counter()
             _ = model(sample_input)
+            if is_cuda:
+                torch.cuda.synchronize(sample_input.device)
             end = time.perf_counter()
             latencies.append((end - start) * 1000.0)
 
@@ -47,6 +57,7 @@ def benchmark_forward_latency(
         "mean_ms": round(mean_ms, 3),
         "min_ms": round(min(latencies), 3),
         "max_ms": round(max(latencies), 3),
+        "throughput_tokens_per_sec": round(tokens_per_sec, 1),
         "tokens_per_sec": round(tokens_per_sec, 1),
     }
 
@@ -67,8 +78,13 @@ def benchmark_generation_throughput(
     Returns:
         Dictionary containing total_time_sec, tokens_generated, and tokens_per_sec.
     """
+    is_cuda = prompt_ids.device.type == "cuda"
+    if is_cuda:
+        torch.cuda.synchronize(prompt_ids.device)
     start = time.perf_counter()
     output_ids = generate_fn(prompt_ids, max_new_tokens)
+    if is_cuda:
+        torch.cuda.synchronize(prompt_ids.device)
     elapsed = time.perf_counter() - start
 
     prompt_len = prompt_ids.size(1)
