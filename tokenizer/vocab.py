@@ -11,13 +11,14 @@ class Vocabulary:
         self._token_to_id: Dict[str, int] = {}
         self._id_to_token: Dict[int, str] = {}
         
-        self.pad_token_id: int = -1
+        self.pad_token_id: int = 0
         self.unk_token_id: int = 1
         self.bos_token_id: int = 50256
         self.eos_token_id: int = 50256
 
         self.add_token(PAD_TOKEN, 0)
         self.add_token(UNK_TOKEN, 1)
+        self.add_token(EOS_TOKEN, 50256)
 
         if vocab_dict is not None:
             for token, idx in vocab_dict.items():
