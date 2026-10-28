@@ -52,7 +52,10 @@ class ServingPipeline:
         else:
             tokens = [ord(c) for c in text]
 
-        input_ids = tokens
+        if not isinstance(tokens, torch.Tensor):
+            input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        else:
+            input_ids = tokens
 
         # Step 2: Model Forward Execution
         if self.model is not None and callable(self.model):
