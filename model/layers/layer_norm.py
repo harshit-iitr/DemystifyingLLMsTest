@@ -61,10 +61,8 @@ class LayerNorm(nn.Module):
         Returns:
             Normalized tensor of same shape.
         """
-        # mean = x.mean(dim=-1, keepdim=True)
-        # var = x.var(dim=-1, keepdim=True, unbiased=False)
-        mean = x.mean(dim=0, keepdim=True)
-        var = x.var(dim=0, keepdim=True, unbiased=False)
+        mean = x.mean(dim=-1, keepdim=True)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
 
         x_norm = (x - mean) / torch.sqrt(var + self.eps)
         return self.weight * x_norm + self.bias
