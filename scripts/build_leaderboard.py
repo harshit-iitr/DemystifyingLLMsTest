@@ -29,6 +29,8 @@ Usage:
   python scripts/build_leaderboard.py
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import re
