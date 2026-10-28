@@ -19,14 +19,8 @@ def create_causal_mask(
     In causal attention:
       Positions where j <= i should have value 0.0 (allowed).
       Positions where j > i should have value -inf (masked).
-
-    are masked with -inf and future positions (j >= i) are allowed!
     """
-    # mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype), diagonal=1)
-    mask = torch.tril(
-        torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype),
-        diagonal=-1
-    )
+    mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype), diagonal=1)
     return mask.unsqueeze(0).unsqueeze(0)
 
 

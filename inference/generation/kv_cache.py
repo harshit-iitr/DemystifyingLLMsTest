@@ -19,12 +19,16 @@ class KVCache:
         Update the key and value cache for a given layer.
         key, value shape: (batch_size, num_heads, seq_len, head_dim)
         """
+        while len(self.k_cache) <= layer_idx:
+            self.k_cache.append(None)
+            self.v_cache.append(None)
+
         if self.k_cache[layer_idx] is None:
             self.k_cache[layer_idx] = key
             self.v_cache[layer_idx] = value
         else:
-            self.k_cache[layer_idx] = key
-            self.v_cache[layer_idx] = value
+            self.k_cache[layer_idx] = torch.cat([self.k_cache[layer_idx], key], dim=-2)
+            self.v_cache[layer_idx] = torch.cat([self.v_cache[layer_idx], value], dim=-2)
 
         return self.k_cache[layer_idx], self.v_cache[layer_idx]
 
@@ -33,6 +37,6 @@ class KVCache:
         self.v_cache = [None] * self.num_layers
 
     def get_seq_length(self, layer_idx: int = 0) -> int:
-        if self.k_cache[layer_idx] is None:
+        if layer_idx >= len(self.k_cache) or self.k_cache[layer_idx] is None:
             return 0
         return self.k_cache[layer_idx].shape[-2]
