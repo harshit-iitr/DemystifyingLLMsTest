@@ -43,7 +43,6 @@ def scaled_dot_product_attention(
     if mask is not None:
         scores = scores + mask
 
-    # attn_weights = F.softmax(scores, dim=-1)
     attn_weights = F.softmax(scores, dim=-1)
 
     if dropout is not None:

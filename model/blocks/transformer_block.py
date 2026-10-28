@@ -73,8 +73,6 @@ class TransformerBlock(nn.Module):
         Returns:
             Output tensor of shape (batch_size, seq_len, d_model)
         """
-        # h = self.resid1(x, self.attn(self.ln1(x), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
-        # out = self.resid2(h, self.ffn(self.ln2(h)))
         h = self.resid1(x, self.attn(self.ln1(x), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
         out = self.resid2(h, self.ffn(self.ln2(h)))
         return out

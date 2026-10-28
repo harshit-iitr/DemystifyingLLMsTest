@@ -5,6 +5,7 @@ HTTP API request parsing, validation, and execution handler.
 import time
 import uuid
 from typing import Dict, Any, Optional, List
+from config.constants import EOS_TOKEN_ID
 from utils.logging_utils import get_logger
 
 logger = get_logger("request_handler")
@@ -37,35 +38,29 @@ class RequestHandler:
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
             prompt_tokens = self.tokenizer.encode(prompt)
         else:
-            prompt_tokens = list(prompt.encode("utf-8"))
+            prompt_tokens = [ord(c) for c in prompt]
 
         # Generate continuation
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                top_k=request_body.get("top_k"),
+                top_p=request_body.get("top_p"),
             )
-        elif self.engine is not None and hasattr(self.engine, "generate"):
-            full_text = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens, temperature=temperature)
-            response_text = full_text[len(prompt):] if isinstance(full_text, str) and full_text.startswith(prompt) else full_text
-            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-                try:
-                    continuation_tokens = self.tokenizer.encode(response_text, add_bos=False)
-                except TypeError:
-                    continuation_tokens = self.tokenizer.encode(response_text)
-            else:
-                continuation_tokens = list(response_text.encode("utf-8")) if isinstance(response_text, str) else []
-            generated_tokens = prompt_tokens + continuation_tokens
         else:
-            raise RuntimeError("An inference engine is required to handle completion requests")
+            raise RuntimeError("No inference engine configured")
 
-        if self.engine is not None and hasattr(self.engine, "generate_tokens"):
-            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-                response_text = self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
-            else:
-                response_text = bytes(token for token in generated_tokens[len(prompt_tokens):] if 0 <= token <= 255).decode("utf-8", errors="replace")
-        completion_count = max(0, len(generated_tokens) - len(prompt_tokens))
+        completion_tokens = generated_tokens[len(prompt_tokens):]
+
+        # Decode only the completion into text
+        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+            response_text = self.tokenizer.decode(completion_tokens)
+        else:
+            response_text = "".join(chr(t) for t in completion_tokens if 0 <= t < 0x110000)
+
+        finish_reason = "stop" if completion_tokens and completion_tokens[-1] == EOS_TOKEN_ID else "length"
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -77,13 +72,13 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": completion_count,
-                "total_tokens": len(prompt_tokens) + completion_count
+                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
+                "total_tokens": len(generated_tokens)
             }
         }
 

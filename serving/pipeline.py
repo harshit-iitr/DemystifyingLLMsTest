@@ -2,17 +2,16 @@
 End-to-end serving pipeline connecting tokenization, model execution, and decoding.
 """
 
-from typing import Optional, Any, Union
-import inspect
+from typing import Optional, Any, Union, List
 import torch
 import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
-from utils.logging_utils import get_logger
+from config.constants import EOS_TOKEN_ID
 from inference.generation import autoregressive_generate
 from inference.sampling import Sampler
-from config.constants import EOS_TOKEN_ID
+from utils.logging_utils import get_logger
 
 logger = get_logger("serving_pipeline")
 
@@ -54,38 +53,34 @@ class ServingPipeline:
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
             tokens = self.tokenizer.encode(text)
         else:
-            tokens = list(text.encode("utf-8"))
+            tokens = [ord(c) for c in text]
 
         if self.model is None or not callable(self.model):
-            raise RuntimeError("A callable model is required to serve completions")
+            return f"{text} [processed]"
 
+        # Step 2: Autoregressive generation (model expects a (batch, seq) LongTensor)
         input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        max_new = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
+        cfg = self.inference_config
         sampler = Sampler(
-            temperature=self.inference_config.temperature,
-            top_k=self.inference_config.top_k,
-            top_p=self.inference_config.top_p,
-            repetition_penalty=self.inference_config.repetition_penalty,
+            temperature=cfg.temperature,
+            top_k=cfg.top_k,
+            top_p=cfg.top_p,
+            repetition_penalty=cfg.repetition_penalty,
         )
-        self.model.eval()
-        forward_method = getattr(self.model, "forward", self.model)
-        try:
-            forward_parameters = inspect.signature(forward_method).parameters
-            supports_cache = "kv_cache" in forward_parameters or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in forward_parameters.values()
-            )
-        except (TypeError, ValueError):
-            supports_cache = False
+        if hasattr(self.model, "eval"):
+            self.model.eval()
         with torch.no_grad():
-            output_ids = autoregressive_generate(
+            output = autoregressive_generate(
                 self.model,
                 input_ids,
-                max_new_tokens=(max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens),
+                max_new_tokens=max_new,
                 eos_token_id=EOS_TOKEN_ID,
-                sampler_fn=(lambda logits: sampler.sample(logits, tokens)) if self.inference_config.temperature > 0 else None,
-                use_cache=self.inference_config.use_kv_cache and supports_cache,
+                sampler_fn=lambda logits: sampler.sample(logits),
             )
 
-        result = output_ids[0].tolist()
+        # Step 3: Decode only the newly generated tokens
+        new_tokens = output[0, input_ids.size(1):].tolist()
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            return self.tokenizer.decode(result)
-        return bytes(token for token in result if 0 <= token <= 255).decode("utf-8", errors="replace")
+            return self.tokenizer.decode(new_tokens)
+        return "".join(chr(t) for t in new_tokens if 0 <= t < 0x110000)

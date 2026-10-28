@@ -8,8 +8,8 @@ import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
-from utils.logging_utils import get_logger
 from inference.sampling import Sampler
+from utils.logging_utils import get_logger
 
 logger = get_logger("inference_engine")
 
@@ -27,15 +27,15 @@ class FullTransformerModel(nn.Module):
         self.embeddings = EmbeddingLayer(config=config)
         self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
-        self.num_layers = config.n_layers
-        if config.tie_weights:
+
+        if getattr(config, "tie_weights", False):
             self.lm_head.tie_weights(self.embeddings.token_embedding.embedding.weight)
 
-    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        kv_cache = kwargs.get("kv_cache")
+    def forward(self, input_ids: torch.Tensor, kv_cache: Optional[Any] = None, **kwargs) -> torch.Tensor:
+        # With a KV cache, new tokens sit after the cached positions
         offset = kv_cache.get_seq_length(0) if kv_cache is not None else 0
         h = self.embeddings(input_ids, offset=offset)
-        h = self.blocks(h, **kwargs)
+        h = self.blocks(h, kv_cache=kv_cache, **kwargs)
         logits = self.lm_head(h)
         return logits
 
@@ -67,10 +67,8 @@ class InferenceEngine:
             try:
                 self.model = FullTransformerModel(self.model_config)
             except Exception as e:
-                logger.debug(f"Could not build FullTransformerModel: {e}")
+                logger.warning(f"Could not build FullTransformerModel: {e}")
                 self.model = None
-        if self.model is not None and hasattr(self.model, "to"):
-            self.model.to(self.device)
 
     def _prepare_model(self) -> None:
         """
@@ -95,51 +93,38 @@ class InferenceEngine:
         max_tokens = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
         if max_tokens <= 0:
             return list(prompt_tokens)
-        if not prompt_tokens:
-            raise ValueError("prompt_tokens must contain at least one token")
 
-        temp = temperature if temperature is not None else self.inference_config.temperature
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("InferenceEngine has no usable model; provide one or fix model construction.")
+
+        cfg = self.inference_config
         sampler = Sampler(
-            temperature=temp,
-            top_k=self.inference_config.top_k if top_k is None else top_k,
-            top_p=self.inference_config.top_p if top_p is None else top_p,
-            repetition_penalty=self.inference_config.repetition_penalty,
+            temperature=temperature if temperature is not None else cfg.temperature,
+            top_k=top_k if top_k is not None else cfg.top_k,
+            top_p=top_p if top_p is not None else cfg.top_p,
+            repetition_penalty=cfg.repetition_penalty,
         )
-        generator = None
-        if self.inference_config.seed is not None:
-            generator = torch.Generator(device=self.device)
-            generator.manual_seed(self.inference_config.seed)
+        if cfg.seed is not None:
+            torch.manual_seed(cfg.seed)
+
         tokens = list(prompt_tokens)
-        use_cache = self.inference_config.use_kv_cache and isinstance(self.model, FullTransformerModel)
-        kv_cache = None
-        if use_cache:
-            from inference.generation import KVCache
-            kv_cache = KVCache(self.model.num_layers)
+        max_len = getattr(self.model_config, "max_seq_len", None)
 
-        # Autoregressive generation loop
         with torch.no_grad():
-            for step in range(max_tokens):
-                input_tokens = tokens if kv_cache is None or step == 0 else tokens[-1:]
-                input_tensor = torch.tensor([input_tokens], dtype=torch.long, device=self.device)
+            for _ in range(max_tokens):
+                # Respect the model's context window
+                context = tokens[-max_len:] if max_len else tokens
+                input_tensor = torch.tensor([context], dtype=torch.long, device=self.device)
 
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor, **({"kv_cache": kv_cache} if kv_cache is not None else {}))
-                        if isinstance(logits, tuple):
-                            logits = logits[0]
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+                logits = self.model(input_tensor)
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
-                        next_token = sampler.sample(next_token_logits, tokens, generator=generator).item()
-                    except Exception:
-                        self._failed = True
-                        raise
-                else:
-                    self._failed = True
-                    raise RuntimeError("No model is available for token generation")
+                next_token = int(sampler.sample(next_token_logits, generated_tokens=tokens).item())
+                tokens.append(next_token)
 
-                tokens.append(int(next_token))
-
-                if next_token in self.inference_config.stop_token_ids:
+                if next_token in cfg.stop_token_ids:
                     break
 
         return tokens
@@ -155,18 +140,13 @@ class InferenceEngine:
         End-to-end string-to-string text generation.
         """
         self._prepare_model()
-        self._failed = False
 
         # Tokenize prompt
         if tokenizer is not None and hasattr(tokenizer, "encode"):
-            try:
-                prompt_ids = tokenizer.encode(prompt)
-            except Exception:
-                prompt_ids = list(prompt.encode("utf-8"))
+            prompt_ids = tokenizer.encode(prompt)
         else:
-            prompt_ids = list(prompt.encode("utf-8"))
+            prompt_ids = [ord(c) for c in prompt]
 
-        # Generate tokens
         output_ids = self.generate_tokens(
             prompt_tokens=prompt_ids,
             max_new_tokens=max_new_tokens,
@@ -174,12 +154,6 @@ class InferenceEngine:
         )
 
         # Decode generated tokens
-        if not getattr(self, "_failed", False) and tokenizer is not None and hasattr(tokenizer, "decode"):
-            try:
-                return tokenizer.decode(output_ids)
-            except Exception:
-                pass
-
         if tokenizer is not None and hasattr(tokenizer, "decode"):
             return tokenizer.decode(output_ids)
-        return bytes(token for token in output_ids if 0 <= token <= 255).decode("utf-8", errors="replace")
+        return "".join(chr(t) if 0 <= t < 0x110000 else "?" for t in output_ids)
