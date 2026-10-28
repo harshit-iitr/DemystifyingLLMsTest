@@ -51,13 +51,22 @@ class RequestHandler:
         completion_text = None
         # Generate continuation
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
-            generated_tokens = self.engine.generate_tokens(
-                prompt_tokens=prompt_tokens,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
-                top_k=request_body.get("top_k"),
-                top_p=request_body.get("top_p"),
-            )
+            generate_tokens = self.engine.generate_tokens
+            token_kwargs = {
+                "prompt_tokens": prompt_tokens,
+                "max_new_tokens": max_tokens,
+                "temperature": temperature,
+                "top_k": request_body.get("top_k"),
+                "top_p": request_body.get("top_p"),
+                "eos_token_id": getattr(getattr(self.tokenizer, "vocab", None), "eos_token_id", None),
+            }
+            try:
+                signature = inspect.signature(generate_tokens)
+                if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
+                    token_kwargs = {k: v for k, v in token_kwargs.items() if k in signature.parameters}
+            except (TypeError, ValueError):
+                pass
+            generated_tokens = generate_tokens(**token_kwargs)
         elif self.engine is not None and hasattr(self.engine, "generate"):
             generate = self.engine.generate
             generate_kwargs = {

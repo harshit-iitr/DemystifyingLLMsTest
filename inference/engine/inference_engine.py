@@ -87,7 +87,8 @@ class InferenceEngine:
         max_new_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         top_k: Optional[int] = None,
-        top_p: Optional[float] = None
+        top_p: Optional[float] = None,
+        eos_token_id: Optional[int] = None,
     ) -> List[int]:
         """
         Generate a list of token IDs autoregressively from input token sequence.
@@ -144,6 +145,7 @@ class InferenceEngine:
                     self.model,
                     input_tensor,
                     max_new_tokens=max_tokens,
+                    eos_token_id=eos_token_id,
                     sampler_fn=sample_next,
                     use_cache=self.inference_config.use_kv_cache and supports_cache,
                     stop_token_ids=self.inference_config.stop_token_ids,
@@ -179,6 +181,7 @@ class InferenceEngine:
         output_ids = self.generate_tokens(
             prompt_tokens=prompt_ids,
             max_new_tokens=max_new_tokens,
+            eos_token_id=getattr(getattr(tokenizer, "vocab", None), "eos_token_id", None),
             **kwargs
         )
 
