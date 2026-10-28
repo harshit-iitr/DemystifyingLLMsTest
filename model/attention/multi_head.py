@@ -43,7 +43,7 @@ class MultiHeadAttention(nn.Module):
         d_model: Optional[int] = None,
         n_heads: Optional[int] = None,
         dropout: Optional[float] = None,
-        bias: bool = False
+        bias: bool = True
     ):
         super().__init__()
         cfg = _resolve_config(config)
