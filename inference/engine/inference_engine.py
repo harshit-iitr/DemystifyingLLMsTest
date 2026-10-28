@@ -24,8 +24,12 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+
+        if getattr(config, "tie_weights", True):
+            from model.heads.weight_tying import tie_weights
+            tie_weights(self.lm_head, self.embeddings.token_embedding)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         h = self.embeddings(input_ids)
@@ -64,12 +68,14 @@ class InferenceEngine:
                 logger.debug(f"Could not build FullTransformerModel: {e}")
                 self.model = None
 
+        self._prepare_model()
+
     def _prepare_model(self) -> None:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None and hasattr(self.model, "eval"):
+            self.model.eval()
 
     def generate_tokens(
         self,
@@ -101,11 +107,22 @@ class InferenceEngine:
                         logits = self.model(input_tensor)
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
+                        k = top_k if top_k is not None else getattr(self.inference_config, "top_k", 0)
+                        p = top_p if top_p is not None else getattr(self.inference_config, "top_p", 1.0)
+
+                        cur_logits = next_token_logits.clone()
+                        if k > 0:
+                            from inference.sampling.top_k import apply_top_k
+                            cur_logits = apply_top_k(cur_logits, k=k)
+                        if p < 1.0:
+                            from inference.sampling.top_p import apply_top_p
+                            cur_logits = apply_top_p(cur_logits, p=p)
+
                         if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
+                            probs = torch.softmax(cur_logits / temp, dim=-1)
                             next_token = torch.multinomial(probs, num_samples=1).item()
                         else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
+                            next_token = torch.argmax(cur_logits, dim=-1).item()
                     except Exception:
                         self._failed = True
                         next_token = (tokens[-1] + 1) % self.model_config.vocab_size
@@ -115,7 +132,10 @@ class InferenceEngine:
 
                 tokens.append(int(next_token))
 
-                if next_token in self.inference_config.stop_token_ids:
+                stop_ids = set(self.inference_config.stop_token_ids)
+                from config.constants import EOS_TOKEN_ID
+                stop_ids.add(EOS_TOKEN_ID)
+                if next_token in stop_ids:
                     break
 
         return tokens

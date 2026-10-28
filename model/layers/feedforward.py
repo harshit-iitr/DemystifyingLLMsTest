@@ -48,8 +48,11 @@ class FeedForward(nn.Module):
         
         if d_ffn is not None:
             self.d_ffn = d_ffn
+        elif hasattr(cfg, "d_ffn") and cfg.d_ffn is not None:
+            self.d_ffn = cfg.d_ffn
         else:
-            self.d_ffn = self.d_model * 2
+            multiplier = getattr(cfg, "ffn_multiplier", 4)
+            self.d_ffn = self.d_model * multiplier
 
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
 

@@ -79,6 +79,6 @@ class BlockStack(nn.Module):
             Output hidden state tensor of shape (batch_size, seq_len, d_model)
         """
         for block in self.blocks:
-            h = block(h, mask=mask, kv_cache=kv_cache)
+            h = block(h, mask=mask, kv_cache=kv_cache, **kwargs)
 
         return self.final_ln(h)
