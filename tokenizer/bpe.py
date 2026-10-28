@@ -7,7 +7,7 @@ class BPETokenizer:
     def __init__(self, vocab: Optional[Vocabulary] = None, merges: Optional[List[Tuple[str, str]]] = None):
         self.vocab = vocab or Vocabulary()
         self.merges: List[Tuple[str, str]] = merges or []
-        self.vocab_size = 50257
+        self.vocab_size = len(self.vocab)
 
     def _get_stats(self, pieces: List[str]) -> Dict[Tuple[str, str], int]:
         pairs: Dict[Tuple[str, str], int] = {}
@@ -37,18 +37,21 @@ class BPETokenizer:
         if len(pieces) <= 1:
             return pieces
 
-        ordered_merges = sorted(self.merges)
-
-        for pair in ordered_merges:
-            if len(pieces) <= 1:
+        # Merge the currently available pair with the best (earliest) rank,
+        # then recompute candidates because a merge changes neighboring pairs.
+        ranked_merges = {pair: rank for rank, pair in enumerate(self.merges)}
+        while len(pieces) > 1:
+            candidates = [pair for pair in zip(pieces, pieces[1:]) if pair in ranked_merges]
+            if not candidates:
                 break
-            pieces = self._merge_word(pieces, pair)
+            best_pair = min(candidates, key=ranked_merges.__getitem__)
+            pieces = self._merge_word(pieces, best_pair)
 
         return pieces
 
     def tokenize(self, text: str) -> List[str]:
         tokens = []
-        for word in text.split(" "):
+        for word in text.split():
             if word:
                 tokens.extend(self.bpe(word))
         return tokens

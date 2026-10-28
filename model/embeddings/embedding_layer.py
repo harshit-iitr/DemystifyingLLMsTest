@@ -55,6 +55,7 @@ class EmbeddingLayer(nn.Module):
         self.d_model = d_model or getattr(cfg, "d_model", 768)
         self.max_seq_len = max_seq_len or getattr(cfg, "max_seq_len", 1024)
         dropout_p = dropout if dropout is not None else getattr(cfg, "dropout", 0.1)
+        self.use_rotary = getattr(cfg, "use_rotary", False)
 
         self.token_embedding = TokenEmbedding(
             vocab_size=self.vocab_size,
@@ -94,8 +95,10 @@ class EmbeddingLayer(nn.Module):
 
         batch_size, seq_len = input_ids.shape
         tok_emb = self.token_embedding(input_ids)
-        pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
-
-        embeddings = tok_emb * pos_emb
+        if self.use_rotary:
+            embeddings = tok_emb
+        else:
+            pos_emb = self.position_embedding(seq_len=seq_len, offset=offset, device=input_ids.device)
+            embeddings = tok_emb + pos_emb
 
         return self.dropout(embeddings)
