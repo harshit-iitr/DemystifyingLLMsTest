@@ -28,10 +28,11 @@ class FullTransformerModel(nn.Module):
         self.lm_head = LMHead(config=config)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        kv_cache = kwargs.get("kv_cache")
+        offset = kv_cache.get_seq_length() if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
         h = self.blocks(h, **kwargs)
-        logits = self.lm_head(h)
-        return logits
+        return self.lm_head(h)
 
 
 class InferenceEngine:

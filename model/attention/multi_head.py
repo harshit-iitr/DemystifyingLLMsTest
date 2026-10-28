@@ -108,8 +108,23 @@ class MultiHeadAttention(nn.Module):
             k, v = kv_cache.update(layer_idx, k, v)
 
         # 4. Prepare causal mask if needed
-        if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+        if mask is None and use_causal_mask:
+            key_len = k.size(-2)
+            past_len = key_len - seq_len
+            query_positions = torch.arange(
+                past_len, key_len, device=x.device
+            ).unsqueeze(-1)
+            key_positions = torch.arange(
+                key_len, device=x.device
+            ).unsqueeze(0)
+
+            mask = torch.zeros(
+                (seq_len, key_len), device=x.device, dtype=x.dtype
+            )
+            mask = mask.masked_fill(
+                key_positions > query_positions, float("-inf")
+            )
+            mask = mask.unsqueeze(0).unsqueeze(0)
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(
