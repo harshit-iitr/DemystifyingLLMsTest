@@ -17,11 +17,24 @@ def apply_repetition_penalty(
 
     logits = logits.clone()
     if isinstance(generated_tokens, torch.Tensor):
-        unique_tokens = torch.unique(generated_tokens).tolist()
+        histories = generated_tokens
+        if histories.ndim == 1:
+            histories = histories.unsqueeze(0)
+        histories = histories.tolist()
     else:
-        unique_tokens = list(set(generated_tokens))
+        histories = [generated_tokens]
 
-    for token_id in unique_tokens:
-        logits[..., token_id] = logits[..., token_id] - penalty
+    if logits.size(0) != len(histories) and len(histories) != 1:
+        raise ValueError("Number of generated-token histories must match logits batch size")
+
+    for batch_idx in range(logits.size(0)):
+        history = histories[batch_idx] if len(histories) > 1 else histories[0]
+        for token_id in set(history):
+            if token_id < 0 or token_id >= logits.size(-1):
+                raise ValueError(f"Generated token ID {token_id} is outside logits vocabulary range")
+            token_logit = logits[batch_idx, ..., token_id]
+            logits[batch_idx, ..., token_id] = torch.where(
+                token_logit < 0, token_logit * penalty, token_logit / penalty
+            )
 
     return logits

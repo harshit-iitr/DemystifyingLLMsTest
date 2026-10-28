@@ -29,11 +29,12 @@ class BeamSearch:
                 if isinstance(logits, tuple):
                     logits = logits[0]
                 next_log_probs = torch.log_softmax(logits[:, -1, :], dim=-1)
-                topk_probs, topk_ids = torch.topk(next_log_probs, self.beam_width, dim=-1)
+                k = min(self.beam_width, next_log_probs.size(-1))
+                topk_probs, topk_ids = torch.topk(next_log_probs, k, dim=-1)
 
-                for k in range(self.beam_width):
-                    cand_id = topk_ids[:, k:k+1]
-                    cand_score = score + topk_probs[0, k].item()
+                for candidate_idx in range(k):
+                    cand_id = topk_ids[:, candidate_idx:candidate_idx+1]
+                    cand_score = score + topk_probs[0, candidate_idx].item()
                     cand_seq = torch.cat([seq, cand_id], dim=-1)
                     new_candidates.append((cand_seq, cand_score))
 
@@ -47,5 +48,7 @@ class BeamSearch:
                 break
 
         all_candidates = completed + beams
+        if not all_candidates:
+            return input_ids
         all_candidates.sort(key=lambda x: x[1] / max(x[0].size(1), 1), reverse=True)
         return all_candidates[0][0]
