@@ -47,12 +47,17 @@ class RequestHandler:
                 temperature=temperature
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
+            # Engine only exposes string generation; fall back to it and skip token accounting
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            generated_tokens = self.tokenizer.encode(raw_gen) if self.tokenizer is not None else [ord(c) for c in raw_gen]
         else:
             generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
 
-        response_text = generated_tokens
+        completion_tokens = generated_tokens[len(prompt_tokens):]
+        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+            response_text = self.tokenizer.decode(completion_tokens)
+        else:
+            response_text = "".join(chr(t) for t in completion_tokens if 0 <= t < 0x110000)
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
