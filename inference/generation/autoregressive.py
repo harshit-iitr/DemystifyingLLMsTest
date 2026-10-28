@@ -47,7 +47,12 @@ def autoregressive_generate(
         generated = torch.cat([generated, next_token], dim=-1)
 
         last_id = next_token[0].item() if batch_size == 1 else None
-        if stop_criteria.should_stop(generated.size(1), last_id):
+        reached_eos = (
+            eos_token_id is not None
+            and next_token.size(0) > 1
+            and bool((next_token == eos_token_id).all().item())
+        )
+        if reached_eos or stop_criteria.should_stop(generated.size(1), last_id):
             break
 
     return generated

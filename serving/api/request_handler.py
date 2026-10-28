@@ -32,6 +32,11 @@ class RequestHandler:
         prompt = request_body.get("prompt", "")
         max_tokens = request_body.get("max_tokens", 16)
         temperature = request_body.get("temperature", 0.8)
+        sampling_args = {
+            name: request_body[name]
+            for name in ("top_k", "top_p", "repetition_penalty")
+            if name in request_body
+        }
 
         # Tokenize prompt
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
@@ -44,7 +49,8 @@ class RequestHandler:
             generated_tokens = self.engine.generate_tokens(
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                **sampling_args,
             )
             completion_tokens = generated_tokens[len(prompt_tokens):]
         elif self.engine is not None and hasattr(self.engine, "generate"):

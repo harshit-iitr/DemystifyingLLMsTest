@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
+from inference.generation.kv_cache import KVCache
 from utils.logging_utils import get_logger
 
 logger = get_logger("inference_engine")
@@ -19,6 +20,7 @@ class FullTransformerModel(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
+        self.num_layers = config.n_layers
         from model.embeddings import EmbeddingLayer
         from model.blocks import BlockStack
         from model.heads import LMHead
@@ -104,13 +106,16 @@ class InferenceEngine:
             return []
 
         # Autoregressive generation loop
+        supports_cache = self.inference_config.use_kv_cache and isinstance(self.model, FullTransformerModel)
+        kv_cache = KVCache(self.model_config.n_layers) if supports_cache else None
         with torch.no_grad():
             for _ in range(max_tokens):
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
+                model_tokens = tokens[-1:] if kv_cache is not None and kv_cache.get_seq_length() > 0 else tokens
+                input_tensor = torch.tensor([model_tokens], dtype=torch.long, device=self.device)
 
                 if self.model is not None and callable(self.model):
                     try:
-                        logits = self.model(input_tensor)
+                        logits = self.model(input_tensor, kv_cache=kv_cache) if kv_cache is not None else self.model(input_tensor)
                         next_token_logits = logits[:, -1, :]  # (1, vocab_size)
 
                         if penalty != 1.0:

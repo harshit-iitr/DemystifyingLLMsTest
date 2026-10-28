@@ -5,6 +5,7 @@ from .special_tokens import PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN
 
 class Vocabulary:
     def __init__(self, vocab_dict: Optional[Dict[str, int]] = None):
+        self._allow_dynamic_tokens = vocab_dict is None
         self._token_to_id: Dict[str, int] = {}
         self._id_to_token: Dict[int, str] = {}
         
@@ -33,6 +34,8 @@ class Vocabulary:
     def token_to_id(self, token: str) -> int:
         if token in self._token_to_id:
             return self._token_to_id[token]
+        if not self._allow_dynamic_tokens:
+            return self.unk_token_id
         return self.add_token(token)
 
     def id_to_token(self, idx: int) -> str:
