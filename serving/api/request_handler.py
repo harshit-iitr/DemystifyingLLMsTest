@@ -54,10 +54,14 @@ class RequestHandler:
             raise RuntimeError("Completion request requires an inference engine")
 
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
-            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-                response_text = self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+            if generated_tokens[:len(prompt_tokens)] == prompt_tokens:
+                completion_tokens = generated_tokens[len(prompt_tokens):]
             else:
-                response_text = " ".join(str(token) for token in generated_tokens[len(prompt_tokens):])
+                completion_tokens = generated_tokens
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                response_text = self.tokenizer.decode(completion_tokens)
+            else:
+                response_text = " ".join(str(token) for token in completion_tokens)
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -74,7 +78,7 @@ class RequestHandler:
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
+                "completion_tokens": max(0, len(generated_tokens) - len(prompt_tokens)),
                 "total_tokens": len(generated_tokens)
             }
         }
