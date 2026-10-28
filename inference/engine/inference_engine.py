@@ -24,9 +24,11 @@ class FullTransformerModel(nn.Module):
         from model.heads import LMHead
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
-        self.lm_head = LMHead(config=config)
-
+        self.blocks = BlockStack(config=config)
+        if config.tie_weights:
+            self.lm_head.tie_weights(
+                self.embeddings.token_embedding.embedding.weight
+            )
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         kv_cache = kwargs.get("kv_cache")
         offset = kv_cache.get_seq_length() if kv_cache is not None else 0
@@ -64,13 +66,12 @@ class InferenceEngine:
             except Exception as e:
                 logger.debug(f"Could not build FullTransformerModel: {e}")
                 self.model = None
-
     def _prepare_model(self) -> None:
-        """
-        Internal lifecycle helper to prepare model state before inference execution.
-        """
-        if self.model is not None and hasattr(self.model, "eval"):
-            self.model.eval()
+        if self.model is not None:
+            if hasattr(self.model, "to"):
+                self.model.to(self.device)
+            if hasattr(self.model, "eval"):
+                self.model.eval()
 
     def generate_tokens(
         self,
