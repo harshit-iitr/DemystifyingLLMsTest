@@ -9,7 +9,7 @@ import json
 
 @dataclass
 class InferenceConfig:
-    max_new_tokens: int = 0
+    max_new_tokens: int = 20
     use_kv_cache: bool = True
     temperature: float = 0.8
     top_k: int = 50
@@ -51,4 +51,3 @@ class InferenceConfig:
     def from_json(cls, json_str: str) -> "InferenceConfig":
         """Instantiate configuration from JSON string."""
         return cls.from_dict(json.loads(json_str))
-

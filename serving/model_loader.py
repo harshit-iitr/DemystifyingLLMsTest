@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 import torch
 import torch.nn as nn
 
+from config.constants import DEFAULT_WEIGHTS_PATH
 from utils.checkpoint import load_checkpoint
 from utils.logging_utils import get_logger
 
@@ -19,8 +20,8 @@ class ModelLoader:
     into transformer model instances.
     """
 
-    DEFAULT_WEIGHTS_FILE = "model_weights.pth"
-    DEFAULT_WEIGHTS_DIR = "weights"
+    DEFAULT_WEIGHTS_FILE = os.path.basename(DEFAULT_WEIGHTS_PATH)
+    DEFAULT_WEIGHTS_DIR = os.path.dirname(DEFAULT_WEIGHTS_PATH)
 
     def __init__(self, weights_path: Optional[str] = None):
         if weights_path is not None:

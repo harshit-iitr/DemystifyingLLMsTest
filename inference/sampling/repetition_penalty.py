@@ -16,12 +16,31 @@ def apply_repetition_penalty(
         return logits
 
     logits = logits.clone()
-    if isinstance(generated_tokens, torch.Tensor):
-        unique_tokens = torch.unique(generated_tokens).tolist()
-    else:
-        unique_tokens = list(set(generated_tokens))
 
-    for token_id in unique_tokens:
-        logits[..., token_id] = logits[..., token_id] - penalty
+    def penalize(token_logits: torch.Tensor) -> torch.Tensor:
+        return torch.where(
+            token_logits < 0,
+            token_logits * penalty,
+            token_logits / penalty,
+        )
+
+    # A batched history has one sequence per logits row. Penalizing the union
+    # of all rows would incorrectly make one request affect another request.
+    if (
+        isinstance(generated_tokens, torch.Tensor)
+        and logits.dim() == 2
+        and generated_tokens.dim() >= 2
+        and generated_tokens.size(0) == logits.size(0)
+    ):
+        for batch_idx, history in enumerate(generated_tokens):
+            for token_id in torch.unique(history).tolist():
+                logits[batch_idx, token_id] = penalize(logits[batch_idx, token_id])
+    else:
+        if isinstance(generated_tokens, torch.Tensor):
+            unique_tokens = torch.unique(generated_tokens).tolist()
+        else:
+            unique_tokens = list(set(generated_tokens))
+        for token_id in unique_tokens:
+            logits[..., token_id] = penalize(logits[..., token_id])
 
     return logits

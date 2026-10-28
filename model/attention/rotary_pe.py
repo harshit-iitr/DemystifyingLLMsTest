@@ -50,8 +50,18 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("cos_cached", emb.cos(), persistent=False)
         self.register_buffer("sin_cached", emb.sin(), persistent=False)
 
-    def forward(self, x: torch.Tensor, seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        cos = self.cos_cached[:seq_len, :].to(dtype=x.dtype, device=x.device)
-        sin = self.sin_cached[:seq_len, :].to(dtype=x.dtype, device=x.device)
+    def forward(
+        self,
+        x: torch.Tensor,
+        seq_len: int,
+        offset: int = 0,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if offset < 0 or offset + seq_len > self.max_seq_len:
+            raise ValueError(
+                f"Requested positions [{offset}, {offset + seq_len}) exceed "
+                f"max_seq_len={self.max_seq_len}"
+            )
+        cos = self.cos_cached[offset:offset + seq_len, :].to(dtype=x.dtype, device=x.device)
+        sin = self.sin_cached[offset:offset + seq_len, :].to(dtype=x.dtype, device=x.device)
         # Reshape to (1, 1, seq_len, dim) for head broadcasting
         return cos.unsqueeze(0).unsqueeze(0), sin.unsqueeze(0).unsqueeze(0)

@@ -21,14 +21,19 @@ class FullTransformerModel(nn.Module):
         self.config = config
         from model.embeddings import EmbeddingLayer
         from model.blocks import BlockStack
-        from model.heads import LMHead
+        from model.heads import LMHead, tie_weights
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        self.num_layers = config.n_layers
+        if config.tie_weights:
+            tie_weights(self.lm_head, self.embeddings.token_embedding)
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
+        kv_cache = kwargs.get("kv_cache")
+        offset = kv_cache.get_seq_length() if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
         h = self.blocks(h, **kwargs)
         logits = self.lm_head(h)
         return logits
@@ -68,8 +73,11 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None:
+            if hasattr(self.model, "to"):
+                self.model.to(self.device)
+            if hasattr(self.model, "eval"):
+                self.model.eval()
 
     def generate_tokens(
         self,
@@ -89,29 +97,32 @@ class InferenceEngine:
             return list(prompt_tokens)
 
         temp = temperature if temperature is not None else self.inference_config.temperature
+        selected_top_k = top_k if top_k is not None else self.inference_config.top_k
+        selected_top_p = top_p if top_p is not None else self.inference_config.top_p
         tokens = list(prompt_tokens)
+
+        if not tokens:
+            raise ValueError("prompt_tokens must contain at least one token")
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("No callable model is available for generation")
+
+        from inference.sampling import Sampler
+        sampler = Sampler(temperature=temp, top_k=selected_top_k, top_p=selected_top_p,
+                          repetition_penalty=self.inference_config.repetition_penalty)
 
         # Autoregressive generation loop
         with torch.no_grad():
             for _ in range(max_tokens):
                 input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
-
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                logits = self.model(input_tensor)
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                next_token_logits = logits[:, -1, :]
+                if temp == 0:
+                    next_token = torch.argmax(next_token_logits, dim=-1).item()
                 else:
-                    self._failed = True
-                    next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    next_token = sampler.sample(next_token_logits, generated_tokens=tokens).item()
 
                 tokens.append(int(next_token))
 
@@ -156,6 +167,9 @@ class InferenceEngine:
             except Exception:
                 pass
 
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation
+        # When no tokenizer is provided, preserve the actual generated IDs in a
+        # readable form rather than fabricating a placeholder continuation.
+        return "".join(
+            chr(token_id) if 0 <= token_id <= 0x10FFFF else f"<token_{token_id}>"
+            for token_id in output_ids
+        )
