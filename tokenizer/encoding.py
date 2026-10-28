@@ -1,8 +1,7 @@
 """Text encoding."""
 from typing import List, Optional
 from .bpe import BPETokenizer
-from .vocab import Vocabulary
-from .special_tokens import BOS_TOKEN
+from .vocab import DEFAULT_VOCAB, Vocabulary
 
 
 def encode(text: str, tokenizer: Optional[BPETokenizer] = None, vocab: Optional[Vocabulary] = None, add_bos: bool = True) -> List[int]:
@@ -10,13 +9,13 @@ def encode(text: str, tokenizer: Optional[BPETokenizer] = None, vocab: Optional[
     Encode input string into token IDs.
     """
     if tokenizer is None:
-        tokenizer = BPETokenizer(vocab=vocab)
+        tokenizer = BPETokenizer(vocab=vocab if vocab is not None else DEFAULT_VOCAB)
     vocab = tokenizer.vocab
 
     tokens = tokenizer.tokenize(text)
     token_ids = [vocab.token_to_id(t) for t in tokens]
 
-    # if add_bos:
-    #     token_ids = [vocab.bos_token_id] + token_ids
+    if add_bos:
+        token_ids.insert(0, vocab.bos_token_id)
 
     return token_ids
