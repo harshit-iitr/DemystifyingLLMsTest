@@ -22,8 +22,8 @@ class InferenceConfig:
 
     def validate(self) -> None:
         """Validate inference parameters."""
-        if self.max_new_tokens < 0:
-            raise ValueError(f"max_new_tokens must be non-negative, got {self.max_new_tokens}")
+        if self.max_new_tokens <= 0:
+            raise ValueError(f"max_new_tokens must be positive, got {self.max_new_tokens}")
         if self.temperature < 0.0:
             raise ValueError(f"temperature must be non-negative, got {self.temperature}")
         if not (0.0 <= self.top_p <= 1.0):
