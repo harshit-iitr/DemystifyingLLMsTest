@@ -53,8 +53,9 @@ class RequestHandler:
         else:
             raise RuntimeError("No inference engine is available")
 
-        response_text = (self.tokenizer.decode(generated_tokens) if self.tokenizer is not None and hasattr(self.tokenizer, "decode")
-                         else " ".join(map(str, generated_tokens)))
+        completion_tokens = generated_tokens[len(prompt_tokens):]
+        response_text = (self.tokenizer.decode(completion_tokens) if self.tokenizer is not None and hasattr(self.tokenizer, "decode")
+                         else " ".join(map(str, completion_tokens)))
         if generated_text is not None:
             response_text = generated_text
 
