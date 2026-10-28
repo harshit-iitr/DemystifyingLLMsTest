@@ -73,6 +73,7 @@ class InferenceEngine:
 
         if isinstance(self.model, nn.Module):
             self.model = self.model.to(self.device)
+        self._prepare_model()
 
     def _prepare_model(self) -> None:
         """
