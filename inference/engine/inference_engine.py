@@ -69,7 +69,7 @@ class InferenceEngine:
         Internal lifecycle helper to prepare model state before inference execution.
         """
         if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+            self.model.eval()
 
     def generate_tokens(
         self,

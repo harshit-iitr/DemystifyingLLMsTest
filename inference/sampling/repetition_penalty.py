@@ -22,6 +22,9 @@ def apply_repetition_penalty(
         unique_tokens = list(set(generated_tokens))
 
     for token_id in unique_tokens:
-        logits[..., token_id] = logits[..., token_id] - penalty
+        if logits[..., token_id] > 0:
+            logits[..., token_id] = logits[..., token_id] / penalty
+        else:
+            logits[..., token_id] = logits[..., token_id] * penalty
 
     return logits
