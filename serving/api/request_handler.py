@@ -48,11 +48,16 @@ class RequestHandler:
             )
         elif self.engine is not None and hasattr(self.engine, "generate"):
             raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            response_text = raw_gen
+            generated_tokens = prompt_tokens
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("Completion request requires an inference engine")
 
-        response_text = generated_tokens
+        if self.engine is not None and hasattr(self.engine, "generate_tokens"):
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                response_text = self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+            else:
+                response_text = " ".join(str(token) for token in generated_tokens[len(prompt_tokens):])
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",

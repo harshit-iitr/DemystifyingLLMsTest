@@ -52,19 +52,19 @@ class ServingPipeline:
         else:
             tokens = [ord(c) for c in text]
 
-        input_ids = tokens
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("Serving pipeline requires a callable model")
 
-        # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
-        else:
-            output = None
-
-        # Step 3: Decoding
+        from inference.generation import autoregressive_generate
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        output_ids = autoregressive_generate(
+            self.model,
+            input_ids,
+            max_new_tokens=(max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens),
+            eos_token_id=(self.inference_config.stop_token_ids[0] if self.inference_config.stop_token_ids else None),
+            use_cache=self.inference_config.use_kv_cache,
+        )
+        output_tokens = output_ids[0].tolist()
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
-
-        return f"{text} [processed]"
+            return self.tokenizer.decode(output_tokens)
+        return " ".join(str(token) for token in output_tokens)
