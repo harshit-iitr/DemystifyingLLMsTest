@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.4.0", "pytest-timeout>=2.2.0"]
+test = ["pytest>=7.4.0,<9", "pytest-timeout>=2.2.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

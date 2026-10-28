@@ -33,6 +33,7 @@ class ServingPipeline:
         except Exception:
             self.config = ModelConfig(d_model=768, vocab_size=50257)
         self.inference_config = inference_config or InferenceConfig()
+        self.inference_config.validate()
         self.device = torch.device(device) if device else torch.device("cpu")
 
     def process(self, text: str, max_new_tokens: Optional[int] = None) -> str:
@@ -46,25 +47,47 @@ class ServingPipeline:
         Returns:
             Decoded completion string.
         """
-        # Step 1: Tokenization
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            tokens = self.tokenizer.encode(text)
-        else:
-            tokens = [ord(c) for c in text]
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise ValueError("A tokenizer with encode/decode methods is required")
+        if self.model is None or not callable(self.model):
+            raise RuntimeError("A callable model is required for serving")
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
 
-        input_ids = tokens
+        tokens = self.tokenizer.encode(text)
+
+        input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
         # Step 2: Model Forward Execution
-        if self.model is not None and callable(self.model):
-            output = self.model(input_ids)
-        else:
-            output = None
+        if hasattr(self.model, "to"):
+            self.model.to(self.device)
+        self.model.eval()
+        from inference.generation.autoregressive import autoregressive_generate
+        from inference.sampling import Sampler
+        sampler = Sampler(
+            temperature=self.inference_config.temperature,
+            top_k=self.inference_config.top_k,
+            top_p=self.inference_config.top_p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
+        history = list(tokens)
+        generator = None
+        if self.inference_config.seed is not None and self.inference_config.temperature > 0:
+            generator = torch.Generator(device=self.device)
+            generator.manual_seed(self.inference_config.seed)
+
+        def sample_next(logits):
+            next_ids = sampler.sample(logits, history, generator=generator)
+            history.extend(next_ids.detach().cpu().tolist())
+            return next_ids
+
+        with torch.no_grad():
+            output_ids = autoregressive_generate(
+                self.model, input_ids,
+                max_new_tokens=(self.inference_config.max_new_tokens if max_new_tokens is None else max_new_tokens),
+                eos_token_id=getattr(getattr(self.tokenizer, "vocab", None), "eos_token_id", None),
+                sampler_fn=sample_next,
+            )
 
         # Step 3: Decoding
-        if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
-            if isinstance(output, torch.Tensor):
-                out_tokens = output.argmax(dim=-1).squeeze(0).tolist()
-                return self.tokenizer.decode(out_tokens)
-            return self.tokenizer.decode(tokens)
-
-        return f"{text} [processed]"
+        return self.tokenizer.decode(output_ids.squeeze(0).tolist())
