@@ -4,7 +4,8 @@ Layer Normalization module.
 """
 
 import inspect
-from typing import Optional, Any, Union, List
+import math
+from typing import Optional, Any, Union, List, Tuple
 import torch
 import torch.nn as nn
 
@@ -34,22 +35,33 @@ class LayerNorm(nn.Module):
 
     def __init__(
         self,
-        normalized_shape: Optional[Union[int, List[int]]] = None,
+        normalized_shape: Optional[Union[int, List[int], Tuple[int, ...]]] = None,
         eps: Optional[float] = None,
         config: Optional[Any] = None
     ):
         super().__init__()
         cfg = _resolve_config(config)
 
-        if normalized_shape is not None:
-            self.d_model = normalized_shape if isinstance(normalized_shape, int) else normalized_shape[-1]
+        if normalized_shape is None:
+            normalized_shape = getattr(cfg, "d_model", 768)
+        if isinstance(normalized_shape, int) and not isinstance(normalized_shape, bool):
+            normalized_shape = (normalized_shape,)
         else:
-            self.d_model = getattr(cfg, "d_model", 768)
+            normalized_shape = tuple(normalized_shape)
+        if not normalized_shape or any(
+            not isinstance(size, int) or isinstance(size, bool) or size <= 0
+            for size in normalized_shape
+        ):
+            raise ValueError(f"normalized_shape must contain positive integers, got {normalized_shape}")
+        self.normalized_shape = normalized_shape
+        self.d_model = normalized_shape[-1]
 
         self.eps = eps if eps is not None else getattr(cfg, "layer_norm_eps", 1e-5)
+        if not math.isfinite(self.eps) or self.eps <= 0:
+            raise ValueError(f"eps must be positive and finite, got {self.eps}")
 
-        self.weight = nn.Parameter(torch.ones(self.d_model))
-        self.bias = nn.Parameter(torch.zeros(self.d_model))
+        self.weight = nn.Parameter(torch.ones(self.normalized_shape))
+        self.bias = nn.Parameter(torch.zeros(self.normalized_shape))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -61,10 +73,14 @@ class LayerNorm(nn.Module):
         Returns:
             Normalized tensor of same shape.
         """
-        # mean = x.mean(dim=-1, keepdim=True)
-        # var = x.var(dim=-1, keepdim=True, unbiased=False)
-        mean = x.mean(dim=0, keepdim=True)
-        var = x.var(dim=0, keepdim=True, unbiased=False)
+        if x.ndim < len(self.normalized_shape) or tuple(x.shape[-len(self.normalized_shape):]) != self.normalized_shape:
+            raise ValueError(
+                f"input trailing dimensions must match normalized_shape {self.normalized_shape}, "
+                f"got {tuple(x.shape)}"
+            )
+        dims = tuple(range(x.ndim - len(self.normalized_shape), x.ndim))
+        mean = x.mean(dim=dims, keepdim=True)
+        var = x.var(dim=dims, keepdim=True, unbiased=False)
 
         x_norm = (x - mean) / torch.sqrt(var + self.eps)
         return self.weight * x_norm + self.bias

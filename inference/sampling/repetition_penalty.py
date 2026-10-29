@@ -14,14 +14,31 @@ def apply_repetition_penalty(
     """
     if penalty == 1.0:
         return logits
+    if penalty <= 0:
+        raise ValueError(f"penalty must be positive, got {penalty}")
 
     logits = logits.clone()
     if isinstance(generated_tokens, torch.Tensor):
-        unique_tokens = torch.unique(generated_tokens).tolist()
+        if generated_tokens.ndim > 1 and logits.ndim > 1 and generated_tokens.size(0) == logits.size(0):
+            tokens_by_row = [torch.unique(row).tolist() for row in generated_tokens]
+        else:
+            shared_tokens = torch.unique(generated_tokens).tolist()
+            tokens_by_row = [shared_tokens] * (logits.size(0) if logits.ndim > 1 else 1)
     else:
-        unique_tokens = list(set(generated_tokens))
+        if generated_tokens and isinstance(generated_tokens[0], (list, tuple)) and logits.ndim > 1:
+            tokens_by_row = [list(set(row)) for row in generated_tokens]
+        else:
+            shared_tokens = list(set(generated_tokens))
+            tokens_by_row = [shared_tokens] * (logits.size(0) if logits.ndim > 1 else 1)
 
-    for token_id in unique_tokens:
-        logits[..., token_id] = logits[..., token_id] - penalty
+    rows = logits.unsqueeze(0) if logits.ndim == 1 else logits.reshape(-1, logits.size(-1))
+    if len(tokens_by_row) != rows.size(0):
+        tokens_by_row = [tokens_by_row[0]] * rows.size(0)
+    for row, unique_tokens in zip(rows, tokens_by_row):
+        for token_id in unique_tokens:
+            token_logits = row[token_id]
+            row[token_id] = torch.where(
+                token_logits < 0, token_logits * penalty, token_logits / penalty
+            )
 
     return logits
