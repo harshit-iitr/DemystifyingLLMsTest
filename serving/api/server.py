@@ -55,7 +55,15 @@ def create_handler_class(router: RouteHandler):
             else:
                 body = {}
 
-            status, response = router.dispatch("POST", self.path, body)
+            try:
+                status, response = router.dispatch("POST", self.path, body)
+            except (ValueError, TypeError) as exc:
+                self._send_json_response(400, {"error": str(exc)})
+                return
+            except Exception as exc:
+                logger.exception("Request processing failed")
+                self._send_json_response(500, {"error": "Request processing failed"})
+                return
             self._send_json_response(status, response)
 
         def log_message(self, format, *args):

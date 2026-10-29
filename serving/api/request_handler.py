@@ -34,10 +34,9 @@ class RequestHandler:
         temperature = request_body.get("temperature", 0.8)
 
         # Tokenize prompt
-        if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
-            prompt_tokens = self.tokenizer.encode(prompt)
-        else:
-            prompt_tokens = [ord(c) for c in prompt]
+        if self.tokenizer is None or not hasattr(self.tokenizer, "encode") or not hasattr(self.tokenizer, "decode"):
+            raise RuntimeError("Completion requests require a tokenizer with encode and decode methods")
+        prompt_tokens = self.tokenizer.encode(prompt)
 
         # Generate continuation
         if self.engine is not None and hasattr(self.engine, "generate_tokens"):
@@ -46,13 +45,11 @@ class RequestHandler:
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
-        elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
+            raise RuntimeError("Completion requests require an engine with generate_tokens")
 
-        response_text = generated_tokens
+        response_text = self.tokenizer.decode(generated_tokens[len(prompt_tokens):])
+        finish_reason = getattr(self.engine, "last_finish_reason", "length")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -64,7 +61,7 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
